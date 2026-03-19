@@ -1,9 +1,20 @@
 #Requires -Version 5.1
 <#
-.SYNOPSIS  WPF System Monitor - CPU, RAM, Disk, Network, Alerts, CSV/HTML export.
-.EXAMPLE   .\SystemMonitor.ps1
-.EXAMPLE   .\SystemMonitor.ps1 -RefreshSeconds 3 -CpuThreshold 80
+.SYNOPSIS  System Monitor v1.0.0 - A WPF performance dashboard for Windows.
+.DESCRIPTION
+    Real-time monitoring of CPU, RAM, Disk and Network with process management,
+    remote host support, alert thresholds, and CSV/Markdown/HTML export.
+    Follows Semantic Versioning (SemVer 2.0.0): MAJOR.MINOR.PATCH
+      MAJOR - breaking changes or major UI overhaul
+      MINOR - new features, backwards-compatible
+      PATCH - bug fixes, performance improvements
+.AUTHOR  Christopher Munn
+.VERSION 1.0.0
+.LINK    https://github.com/ChrisMunnPS/SystemMonitor
+.EXAMPLE .\SystemMonitor.ps1
+.EXAMPLE .\SystemMonitor.ps1 -RefreshSeconds 3 -CpuThreshold 80 -RamThreshold 85
 #>
+
 [CmdletBinding()]
 param(
     [ValidateRange(1,60)][int]$RefreshSeconds = 2,
@@ -11,6 +22,10 @@ param(
     [ValidateRange(1,100)][int]$RamThreshold  = 80,
     [ValidateRange(1,100)][int]$DiskThreshold = 90
 )
+
+# ── Version (SemVer 2.0.0) ────────────────────────────────────────────────────
+$script:Version = '1.0.0'
+$script:AppName = 'System Monitor'
 
 if (-not $env:WPF_STA_CHILD) {
     $env:WPF_STA_CHILD = '1'
@@ -51,8 +66,8 @@ function Get-FriendlyOS {
 <Window
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-    Title="System Monitor"
-    Height="800" Width="1200" MinHeight="650" MinWidth="950"
+    Title="System Monitor v1.0.0"
+    Height="720" Width="1150" MinHeight="540" MinWidth="820"
     WindowStartupLocation="CenterScreen"
     Background="#0F1117">
   <Grid Margin="8">
@@ -87,11 +102,12 @@ function Get-FriendlyOS {
         <Button x:Name="btnExportMd"   Content="Export Markdown" Margin="3,0" Padding="12,7"/>
         <Button x:Name="btnExportHtml" Content="Export HTML"     Margin="3,0" Padding="12,7"/>
         <Button x:Name="btnSettings"   Content="Thresholds"  Margin="3,0" Padding="12,7"/>
+        <Button x:Name="btnAbout"      Content="About"       Margin="3,0" Padding="12,7"/>
       </StackPanel>
     </Grid>
 
     <!-- REMOTE HOST BAR -->
-    <Border Grid.Row="2" Background="#12151F" CornerRadius="8" Padding="8,6"
+    <Border Grid.Row="1" Background="#12151F" CornerRadius="8" Padding="8,6"
             Margin="5,0,5,4" BorderBrush="#2D3148" BorderThickness="1">
       <Grid>
         <Grid.ColumnDefinitions>
@@ -128,9 +144,12 @@ function Get-FriendlyOS {
             Margin="5,0,5,6" BorderBrush="#2D3148" BorderThickness="1">
       <DockPanel>
         <TextBlock Text="TOOLS" Foreground="#8B8FA8" FontSize="10" FontFamily="Segoe UI"
-                   FontWeight="SemiBold" VerticalAlignment="Center" Margin="0,0,12,0"
+                   FontWeight="SemiBold" VerticalAlignment="Center" Margin="0,0,10,0"
                    DockPanel.Dock="Left"/>
-        <WrapPanel x:Name="pnlTools" Orientation="Horizontal"/>
+        <ScrollViewer HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Disabled"
+                      CanContentScroll="True">
+          <StackPanel x:Name="pnlTools" Orientation="Horizontal"/>
+        </ScrollViewer>
       </DockPanel>
     </Border>
 
@@ -143,13 +162,13 @@ function Get-FriendlyOS {
         <ColumnDefinition Width="*"/>
       </Grid.ColumnDefinitions>
 
-      <Border Grid.Column="0" Background="#1A1D27" CornerRadius="8" Padding="14" Margin="5"
+      <Border Grid.Column="0" Background="#1A1D27" CornerRadius="8" Padding="10,10" Margin="4"
               BorderBrush="#2D3148" BorderThickness="1">
         <StackPanel>
           <TextBlock Text="CPU USAGE" Foreground="#8B8FA8" FontSize="10" FontFamily="Segoe UI" FontWeight="SemiBold"/>
           <Grid Margin="0,3,0,0">
             <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-            <TextBlock x:Name="txtCpu" Text="0%" Foreground="#E2E8F0" FontSize="30" FontFamily="Segoe UI" FontWeight="Bold"/>
+            <TextBlock x:Name="txtCpu" Text="0%" Foreground="#E2E8F0" FontSize="26" FontFamily="Segoe UI" FontWeight="Bold"/>
             <TextBlock x:Name="txtCpuAlert" Grid.Column="1" Text="[!]" FontSize="14" Foreground="#F97316" VerticalAlignment="Top" Visibility="Collapsed"/>
           </Grid>
           <ProgressBar x:Name="barCpu" Maximum="100" Height="6" Margin="0,5,0,0" BorderThickness="0" Background="#2D3148" Foreground="#6C63FF"/>
@@ -157,13 +176,13 @@ function Get-FriendlyOS {
         </StackPanel>
       </Border>
 
-      <Border Grid.Column="1" Background="#1A1D27" CornerRadius="8" Padding="14" Margin="5"
+      <Border Grid.Column="1" Background="#1A1D27" CornerRadius="8" Padding="10,10" Margin="4"
               BorderBrush="#2D3148" BorderThickness="1">
         <StackPanel>
           <TextBlock Text="MEMORY" Foreground="#8B8FA8" FontSize="10" FontFamily="Segoe UI" FontWeight="SemiBold"/>
           <Grid Margin="0,3,0,0">
             <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-            <TextBlock x:Name="txtRam" Text="0%" Foreground="#E2E8F0" FontSize="30" FontFamily="Segoe UI" FontWeight="Bold"/>
+            <TextBlock x:Name="txtRam" Text="0%" Foreground="#E2E8F0" FontSize="26" FontFamily="Segoe UI" FontWeight="Bold"/>
             <TextBlock x:Name="txtRamAlert" Grid.Column="1" Text="[!]" FontSize="14" Foreground="#F97316" VerticalAlignment="Top" Visibility="Collapsed"/>
           </Grid>
           <ProgressBar x:Name="barRam" Maximum="100" Height="6" Margin="0,5,0,0" BorderThickness="0" Background="#2D3148" Foreground="#6C63FF"/>
@@ -171,13 +190,13 @@ function Get-FriendlyOS {
         </StackPanel>
       </Border>
 
-      <Border Grid.Column="2" Background="#1A1D27" CornerRadius="8" Padding="14" Margin="5"
+      <Border Grid.Column="2" Background="#1A1D27" CornerRadius="8" Padding="10,10" Margin="4"
               BorderBrush="#2D3148" BorderThickness="1">
         <StackPanel>
           <TextBlock Text="PRIMARY DISK" Foreground="#8B8FA8" FontSize="10" FontFamily="Segoe UI" FontWeight="SemiBold"/>
           <Grid Margin="0,3,0,0">
             <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-            <TextBlock x:Name="txtDisk" Text="0%" Foreground="#E2E8F0" FontSize="30" FontFamily="Segoe UI" FontWeight="Bold"/>
+            <TextBlock x:Name="txtDisk" Text="0%" Foreground="#E2E8F0" FontSize="26" FontFamily="Segoe UI" FontWeight="Bold"/>
             <TextBlock x:Name="txtDiskAlert" Grid.Column="1" Text="[!]" FontSize="14" Foreground="#F97316" VerticalAlignment="Top" Visibility="Collapsed"/>
           </Grid>
           <ProgressBar x:Name="barDisk" Maximum="100" Height="6" Margin="0,5,0,0" BorderThickness="0" Background="#2D3148" Foreground="#6C63FF"/>
@@ -185,7 +204,7 @@ function Get-FriendlyOS {
         </StackPanel>
       </Border>
 
-      <Border Grid.Column="3" Background="#1A1D27" CornerRadius="8" Padding="14" Margin="5"
+      <Border Grid.Column="3" Background="#1A1D27" CornerRadius="8" Padding="10,10" Margin="4"
               BorderBrush="#2D3148" BorderThickness="1">
         <StackPanel>
           <TextBlock Text="NETWORK" Foreground="#8B8FA8" FontSize="10" FontFamily="Segoe UI" FontWeight="SemiBold"/>
@@ -199,7 +218,7 @@ function Get-FriendlyOS {
     </Grid>
 
     <!-- BATTERY / POWER ROW (shown only when battery detected) -->
-    <Border x:Name="borderBattery" Grid.Row="3" Background="#1A1D27" CornerRadius="8"
+    <Border x:Name="borderBattery" Grid.Row="4" Background="#1A1D27" CornerRadius="8"
             Padding="10,8" Margin="5,0,5,4" BorderBrush="#2D3148" BorderThickness="1"
             Visibility="Collapsed">
       <Grid>
@@ -248,7 +267,7 @@ function Get-FriendlyOS {
           </DockPanel>
         </Border>
 
-        <Border Grid.Row="2" Background="#1A1D27" CornerRadius="8" Padding="14" Margin="5"
+        <Border Grid.Row="1" Background="#1A1D27" CornerRadius="8" Padding="14" Margin="5"
                 BorderBrush="#2D3148" BorderThickness="1">
           <DockPanel>
             <Grid DockPanel.Dock="Top" Margin="0,0,0,6">
@@ -346,8 +365,11 @@ foreach ($n in @(
     'txtPing','txtAdapter','borderBattery','barBatt','txtBattIcon','txtBattPct','txtBattStatus','txtBattTime',
     'txtProcFilter','btnProcFilterClear',
     'txtStatus','txtUptime','txtTime',
-    'chkAutoRefresh','btnRefresh','btnExportCsv','btnExportMd','btnExportHtml','btnSettings','btnClearAlerts','btnEndTask'
+    'chkAutoRefresh','btnRefresh','btnExportCsv','btnExportMd','btnExportHtml','btnSettings','btnAbout','btnClearAlerts','btnEndTask'
 )) { $C[$n] = $Window.FindName($n) }
+# Warn about any controls that failed FindName
+$C.GetEnumerator() | Where-Object { $null -eq $_.Value } |
+    ForEach-Object { Write-Warning "FindName: '$($_.Key)' not found - check x:Name in XAML" }
 
 # ── Shared brush converter ─────────────────────────────────────────────────────
 $conv = [System.Windows.Media.BrushConverter]::new()
@@ -364,7 +386,7 @@ function Set-ButtonStyle {
     $b.Cursor          = [System.Windows.Input.Cursors]::Hand
 }
 
-foreach ($n in @('btnRefresh','btnExportCsv','btnExportMd','btnExportHtml','btnSettings','btnClearAlerts')) {
+foreach ($n in @('btnRefresh','btnExportCsv','btnExportMd','btnExportHtml','btnSettings','btnAbout','btnClearAlerts')) {
     Set-ButtonStyle $C[$n]
 }
 Set-ButtonStyle $C['btnEndTask'] '#3D1A1A' '#EF4444'
@@ -430,8 +452,8 @@ foreach ($t in $tools) {
     $tb = [System.Windows.Controls.Button]::new()
     $tb.Content         = $t.Label
     $tb.ToolTip         = $t.Tip
-    $tb.Margin          = [System.Windows.Thickness]::new(0,0,5,0)
-    $tb.Padding         = [System.Windows.Thickness]::new(10,4,10,4)
+    $tb.Margin          = [System.Windows.Thickness]::new(0,0,4,0)
+    $tb.Padding         = [System.Windows.Thickness]::new(9,4,9,4)
     $tb.Background      = $conv.ConvertFromString('#2D3148')
     $tb.Foreground      = $conv.ConvertFromString('#CBD5E1')
     $tb.BorderBrush     = $conv.ConvertFromString('#3D4268')
@@ -1301,6 +1323,161 @@ function Invoke-EndTask {
     } catch { $C['txtStatus'].Text = "[!] Could not end $($row.Name): $($_.Exception.Message)" }
 }
 
+# ── About dialog ──────────────────────────────────────────────────────────────
+function Show-AboutDialog {
+    $ad = [System.Windows.Window]::new()
+    $ad.Title = "About $($script:AppName)"
+    $ad.Width = 460; $ad.Height = 370
+    $ad.WindowStartupLocation = 'CenterOwner'
+    $ad.Owner      = $Window
+    $ad.ResizeMode = 'NoResize'
+    $ad.Background = $conv.ConvertFromString('#0F1117')
+
+    $sp = [System.Windows.Controls.StackPanel]::new()
+    $sp.Margin = [System.Windows.Thickness]::new(28,24,28,24)
+
+    # ── App title + version ────────────────────────────────────────────────────
+    $titleRow = [System.Windows.Controls.StackPanel]::new()
+    $titleRow.Orientation = 'Horizontal'
+    $titleRow.HorizontalAlignment = 'Center'
+    $titleRow.Margin = [System.Windows.Thickness]::new(0,0,0,4)
+
+    # Monitor icon (Segoe UI Symbol U+E7F4)
+    $iconApp = [System.Windows.Controls.TextBlock]::new()
+    $iconApp.Text       = [char]0xE7F4   # Screen / monitor glyph
+    $iconApp.FontFamily = [System.Windows.Media.FontFamily]::new('Segoe MDL2 Assets')
+    $iconApp.FontSize   = 22
+    $iconApp.Foreground = $conv.ConvertFromString('#6C63FF')
+    $iconApp.VerticalAlignment = 'Center'
+    $iconApp.Margin = [System.Windows.Thickness]::new(0,0,10,0)
+    $titleRow.Children.Add($iconApp) | Out-Null
+
+    $t1 = [System.Windows.Controls.TextBlock]::new()
+    $t1.Text       = $script:AppName.ToUpper()
+    $t1.Foreground = $conv.ConvertFromString('#E2E8F0')
+    $t1.FontSize   = 20; $t1.FontWeight = 'Bold'
+    $t1.FontFamily = [System.Windows.Media.FontFamily]::new('Segoe UI')
+    $t1.VerticalAlignment = 'Center'
+    $titleRow.Children.Add($t1) | Out-Null
+    $sp.Children.Add($titleRow) | Out-Null
+
+    # Version + description
+    $t2 = [System.Windows.Controls.TextBlock]::new()
+    $t2.Text = "v$($script:Version)  |  A WPF performance dashboard for Windows"
+    $t2.Foreground = $conv.ConvertFromString('#8B8FA8')
+    $t2.FontSize = 11; $t2.FontFamily = [System.Windows.Media.FontFamily]::new('Segoe UI')
+    $t2.HorizontalAlignment = 'Center'
+    $t2.Margin = [System.Windows.Thickness]::new(0,0,0,18)
+    $sp.Children.Add($t2) | Out-Null
+
+    # Divider
+    $div = [System.Windows.Controls.Border]::new()
+    $div.Height = 1; $div.Background = $conv.ConvertFromString('#2D3148')
+    $div.Margin = [System.Windows.Thickness]::new(0,0,0,18)
+    $sp.Children.Add($div) | Out-Null
+
+    # ── Info rows: icon + label + value/link ───────────────────────────────────
+    # Icons use Segoe MDL2 Assets glyphs (built into Windows 10/11)
+    $links = @(
+        @{ Icon=[char]0xE77B; IconColor='#CBD5E1'; Label='Author';   Value='Christopher Munn';                     Url='' },
+        @{ Icon=[char]0xE8A5; IconColor='#6C63FF'; Label='GitHub';   Value='ChrisMunnPS/SystemMonitor';            Url='https://github.com/ChrisMunnPS/SystemMonitor' },
+        @{ Icon=[char]0xE909; IconColor='#10B981'; Label='Website';  Value='ChrisMunnPS.github.io';                Url='https://ChrisMunnPS.github.io' },
+        @{ Icon=[char]0xE8D4; IconColor='#0A66C2'; Label='LinkedIn'; Value='in/chrismunn';                         Url='https://www.linkedin.com/in/chrismunn' }
+    )
+    # Icon codes:
+    #   E77B = Contact/Person
+    #   E8A5 = Code/GitHub-style
+    #   E909 = Globe/Web
+    #   E8D4 = LinkedinLogo-style (contact card)
+
+    foreach ($row in $links) {
+        $g = [System.Windows.Controls.Grid]::new()
+        $g.Margin = [System.Windows.Thickness]::new(0,0,0,12)
+        $col0 = [System.Windows.Controls.ColumnDefinition]::new(); $col0.Width = [System.Windows.GridLength]::new(28)
+        $col1 = [System.Windows.Controls.ColumnDefinition]::new(); $col1.Width = [System.Windows.GridLength]::new(70)
+        $col2 = [System.Windows.Controls.ColumnDefinition]::new(); $col2.Width = [System.Windows.GridLength]::new(1,'Star')
+        $g.ColumnDefinitions.Add($col0); $g.ColumnDefinitions.Add($col1); $g.ColumnDefinitions.Add($col2)
+
+        # Icon
+        $ico = [System.Windows.Controls.TextBlock]::new()
+        $ico.Text       = $row.Icon
+        $ico.FontFamily = [System.Windows.Media.FontFamily]::new('Segoe MDL2 Assets')
+        $ico.FontSize   = 14
+        $ico.Foreground = $conv.ConvertFromString($row.IconColor)
+        $ico.VerticalAlignment = 'Center'
+        [System.Windows.Controls.Grid]::SetColumn($ico, 0)
+        $g.Children.Add($ico) | Out-Null
+
+        # Label
+        $lbl = [System.Windows.Controls.TextBlock]::new()
+        $lbl.Text = $row.Label
+        $lbl.Foreground = $conv.ConvertFromString('#8B8FA8')
+        $lbl.FontSize = 11; $lbl.FontWeight = 'SemiBold'
+        $lbl.FontFamily = [System.Windows.Media.FontFamily]::new('Segoe UI')
+        $lbl.VerticalAlignment = 'Center'
+        [System.Windows.Controls.Grid]::SetColumn($lbl, 1)
+        $g.Children.Add($lbl) | Out-Null
+
+        # Value or hyperlink
+        if ($row.Url) {
+            $link = [System.Windows.Documents.Hyperlink]::new()
+            $link.NavigateUri = [Uri]::new($row.Url)
+            $link.Foreground  = $conv.ConvertFromString($row.IconColor)
+            $link.Inlines.Add([System.Windows.Documents.Run]::new($row.Value)) | Out-Null
+            $link.Add_RequestNavigate(({
+                param($s,$e); Start-Process $e.Uri.AbsoluteUri; $e.Handled=$true
+            }).GetNewClosure())
+            $tb = [System.Windows.Controls.TextBlock]::new()
+            $tb.FontSize = 11; $tb.FontFamily = [System.Windows.Media.FontFamily]::new('Segoe UI')
+            $tb.VerticalAlignment = 'Center'
+            $tb.Inlines.Add($link) | Out-Null
+            [System.Windows.Controls.Grid]::SetColumn($tb, 2)
+            $g.Children.Add($tb) | Out-Null
+        } else {
+            $val = [System.Windows.Controls.TextBlock]::new()
+            $val.Text = $row.Value
+            $val.Foreground = $conv.ConvertFromString('#E2E8F0')
+            $val.FontSize = 11; $val.FontFamily = [System.Windows.Media.FontFamily]::new('Segoe UI')
+            $val.VerticalAlignment = 'Center'
+            [System.Windows.Controls.Grid]::SetColumn($val, 2)
+            $g.Children.Add($val) | Out-Null
+        }
+        $sp.Children.Add($g) | Out-Null
+    }
+
+    # Divider
+    $div2 = [System.Windows.Controls.Border]::new()
+    $div2.Height = 1; $div2.Background = $conv.ConvertFromString('#2D3148')
+    $div2.Margin = [System.Windows.Thickness]::new(0,6,0,10)
+    $sp.Children.Add($div2) | Out-Null
+
+    # Footer: machine + PS version
+    $footerRow = [System.Windows.Controls.StackPanel]::new()
+    $footerRow.Orientation = 'Horizontal'
+    $footerRow.HorizontalAlignment = 'Center'
+
+    $icoMachine = [System.Windows.Controls.TextBlock]::new()
+    $icoMachine.Text       = [char]0xE7EF   # Desktop PC glyph
+    $icoMachine.FontFamily = [System.Windows.Media.FontFamily]::new('Segoe MDL2 Assets')
+    $icoMachine.FontSize   = 12
+    $icoMachine.Foreground = $conv.ConvertFromString('#4B5563')
+    $icoMachine.VerticalAlignment = 'Center'
+    $icoMachine.Margin = [System.Windows.Thickness]::new(0,0,6,0)
+    $footerRow.Children.Add($icoMachine) | Out-Null
+
+    $tfooter = [System.Windows.Controls.TextBlock]::new()
+    $arch = if ([Environment]::Is64BitProcess) { '64-bit' } else { '32-bit' }
+    $tfooter.Text = "$([Environment]::MachineName)  |  PowerShell $($PSVersionTable.PSVersion)  |  $arch"
+    $tfooter.Foreground = $conv.ConvertFromString('#4B5563')
+    $tfooter.FontSize = 10; $tfooter.FontFamily = [System.Windows.Media.FontFamily]::new('Segoe UI')
+    $tfooter.VerticalAlignment = 'Center'
+    $footerRow.Children.Add($tfooter) | Out-Null
+    $sp.Children.Add($footerRow) | Out-Null
+
+    $ad.Content = $sp
+    [void]$ad.ShowDialog()
+}
+
 # ── Timer ──────────────────────────────────────────────────────────────────────
 $Timer=[System.Windows.Threading.DispatcherTimer]::new()
 $Timer.Interval=[TimeSpan]::FromSeconds($RefreshSeconds)
@@ -1351,6 +1528,7 @@ $C['btnExportCsv'].Add_Click({  Export-ToCsv })
 $C['btnExportMd'].Add_Click({   Export-ToMarkdown })
 $C['btnExportHtml'].Add_Click({ Export-ToHtml })
 $C['btnSettings'].Add_Click({   Show-SettingsDialog })
+if ($null -ne $C['btnAbout']) { $C['btnAbout'].Add_Click({ Show-AboutDialog }) }
 $C['btnEndTask'].Add_Click({    Invoke-EndTask })
 $C['btnClearAlerts'].Add_Click({ $script:AlertLog.Clear(); $C['lstAlerts'].Items.Clear() })
 
