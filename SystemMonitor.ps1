@@ -112,30 +112,54 @@ function Get-FriendlyOS {
       <Grid>
         <Grid.ColumnDefinitions>
           <ColumnDefinition Width="Auto"/>
-          <ColumnDefinition Width="200"/>
+          <ColumnDefinition Width="170"/>
+          <ColumnDefinition Width="Auto"/>
+          <ColumnDefinition Width="120"/>
+          <ColumnDefinition Width="Auto"/>
+          <ColumnDefinition Width="100"/>
           <ColumnDefinition Width="Auto"/>
           <ColumnDefinition Width="Auto"/>
           <ColumnDefinition Width="Auto"/>
           <ColumnDefinition Width="*"/>
-          <ColumnDefinition Width="Auto"/>
         </Grid.ColumnDefinitions>
-        <TextBlock Grid.Column="0" Text="Remote Host:" Foreground="#8B8FA8" FontSize="11"
-                   FontFamily="Segoe UI" VerticalAlignment="Center" Margin="0,0,8,0"/>
+        <TextBlock Grid.Column="0" Text="Host:" Foreground="#8B8FA8" FontSize="11"
+                   FontFamily="Segoe UI" VerticalAlignment="Center" Margin="0,0,6,0"/>
         <ComboBox x:Name="cmbRemoteHost" Grid.Column="1" IsEditable="True"
                   FontFamily="Consolas" FontSize="11" Height="26"
-                  Text="" ToolTip="Enter hostname or IP. Leave blank for local machine."/>
-        <Button x:Name="btnConnect" Grid.Column="2" Content="Connect"
-                Margin="6,0,0,0" Padding="10,4" FontSize="11"/>
-        <Button x:Name="btnDisconnect" Grid.Column="3" Content="Disconnect"
+                  Text="" ToolTip="Hostname or IP address of remote machine"/>
+        <TextBlock Grid.Column="2" Text="User:" Foreground="#8B8FA8" FontSize="11"
+                   FontFamily="Segoe UI" VerticalAlignment="Center" Margin="8,0,6,0"/>
+        <TextBox x:Name="txtRemoteUser" Grid.Column="3" Height="26"
+                 Background="#1A1D27" Foreground="#CBD5E1" BorderBrush="#3D4268" BorderThickness="1"
+                 FontFamily="Consolas" FontSize="11" Padding="5,4"
+                 ToolTip="Username (optional - leave blank to use current Windows credentials)"/>
+        <TextBlock Grid.Column="4" Text="Pass:" Foreground="#8B8FA8" FontSize="11"
+                   FontFamily="Segoe UI" VerticalAlignment="Center" Margin="8,0,6,0"/>
+        <PasswordBox x:Name="pwdRemote" Grid.Column="5" Height="26"
+                     Background="#1A1D27" Foreground="#CBD5E1" BorderBrush="#3D4268" BorderThickness="1"
+                     FontFamily="Consolas" FontSize="11" Padding="5,4"
+                     ToolTip="Password (optional - leave blank to use current Windows credentials)"/>
+        <Button x:Name="btnConnect" Grid.Column="6" Content="Connect"
+                Margin="8,0,0,0" Padding="10,4" FontSize="11"/>
+        <Button x:Name="btnDisconnect" Grid.Column="7" Content="Disconnect"
                 Margin="4,0,0,0" Padding="10,4" FontSize="11" IsEnabled="False"/>
-        <Ellipse x:Name="ellStatus" Grid.Column="4" Width="10" Height="10"
-                 Fill="#4B5563" Margin="8,0,0,0" VerticalAlignment="Center"
-                 ToolTip="Connection status"/>
-        <TextBlock x:Name="txtRemoteStatus" Grid.Column="5" Foreground="#8B8FA8"
-                   FontSize="11" FontFamily="Segoe UI" VerticalAlignment="Center" Margin="6,0,0,0"
-                   Text="Local machine"/>
-        <TextBlock Grid.Column="6" Text="Filter processes:" Foreground="#8B8FA8" FontSize="11"
-                   FontFamily="Segoe UI" VerticalAlignment="Center" Margin="0,0,6,0"/>
+        <!-- Local indicator (always green when no remote active) -->
+        <StackPanel Grid.Column="8" Orientation="Horizontal" VerticalAlignment="Center" Margin="10,0,0,0">
+          <Ellipse x:Name="ellLocalStatus" Width="9" Height="9"
+                   Fill="#10B981" VerticalAlignment="Center"
+                   ToolTip="Local machine connection"/>
+          <TextBlock Text="LOCAL" Foreground="#8B8FA8" FontSize="10" FontWeight="SemiBold"
+                     FontFamily="Segoe UI" VerticalAlignment="Center" Margin="4,0,0,0"/>
+        </StackPanel>
+        <!-- Remote indicator (grey=disconnected, orange=connecting, green=connected, red=failed) -->
+        <StackPanel Grid.Column="9" Orientation="Horizontal" VerticalAlignment="Center" Margin="10,0,0,0">
+          <Ellipse x:Name="ellStatus" Width="9" Height="9"
+                   Fill="#4B5563" VerticalAlignment="Center"
+                   ToolTip="Remote connection status"/>
+          <TextBlock x:Name="txtRemoteStatus" Foreground="#8B8FA8" FontSize="10" FontWeight="SemiBold"
+                     FontFamily="Segoe UI" VerticalAlignment="Center" Margin="4,0,0,0"
+                     Text="REMOTE"/>
+        </StackPanel>
       </Grid>
     </Border>
 
@@ -340,10 +364,26 @@ function Get-FriendlyOS {
           <ColumnDefinition Width="*"/>
           <ColumnDefinition Width="Auto"/>
           <ColumnDefinition Width="Auto"/>
+          <ColumnDefinition Width="Auto"/>
         </Grid.ColumnDefinitions>
-        <TextBlock x:Name="txtStatus" Foreground="#8B8FA8" FontSize="11" FontFamily="Segoe UI" VerticalAlignment="Center"/>
-        <TextBlock x:Name="txtUptime" Grid.Column="1" Foreground="#6C63FF" FontSize="11" FontFamily="Segoe UI" VerticalAlignment="Center" Margin="18,0"/>
-        <TextBlock x:Name="txtTime"   Grid.Column="2" Foreground="#8B8FA8" FontSize="11" FontFamily="Consolas" VerticalAlignment="Center"/>
+        <TextBlock x:Name="txtStatus"    Grid.Column="0" Foreground="#8B8FA8" FontSize="11"
+                   FontFamily="Segoe UI" VerticalAlignment="Center"/>
+        <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center" Margin="16,0,0,0">
+          <TextBlock Text="SYS " Foreground="#4B5563" FontSize="10" FontWeight="SemiBold"
+                     FontFamily="Segoe UI" VerticalAlignment="Center"/>
+          <TextBlock x:Name="txtSysUptime" Foreground="#8B8FA8" FontSize="11"
+                     FontFamily="Consolas" VerticalAlignment="Center"
+                     ToolTip="Time since Windows last booted"/>
+        </StackPanel>
+        <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center" Margin="16,0,0,0">
+          <TextBlock Text="APP " Foreground="#4B5563" FontSize="10" FontWeight="SemiBold"
+                     FontFamily="Segoe UI" VerticalAlignment="Center"/>
+          <TextBlock x:Name="txtUptime" Foreground="#6C63FF" FontSize="11"
+                     FontFamily="Consolas" VerticalAlignment="Center"
+                     ToolTip="Time since System Monitor was launched"/>
+        </StackPanel>
+        <TextBlock x:Name="txtTime" Grid.Column="3" Foreground="#8B8FA8" FontSize="11"
+                   FontFamily="Consolas" VerticalAlignment="Center" Margin="16,0,0,0"/>
       </Grid>
     </Border>
   </Grid>
@@ -361,10 +401,10 @@ foreach ($n in @(
     'txtDisk','txtDiskAlert','barDisk','txtDiskDetail',
     'txtNet','barNet','txtNetDetail',
     'wrapDrives','gridProcs','lstAlerts','cmbSort','pnlTools',
-    'cmbRemoteHost','btnConnect','btnDisconnect','ellStatus','txtRemoteStatus',
+    'cmbRemoteHost','txtRemoteUser','pwdRemote','btnConnect','btnDisconnect','ellLocalStatus','ellStatus','txtRemoteStatus',
     'txtPing','txtAdapter','borderBattery','barBatt','txtBattIcon','txtBattPct','txtBattStatus','txtBattTime',
     'txtProcFilter','btnProcFilterClear',
-    'txtStatus','txtUptime','txtTime',
+    'txtStatus','txtSysUptime','txtUptime','txtTime',
     'chkAutoRefresh','btnRefresh','btnExportCsv','btnExportMd','btnExportHtml','btnSettings','btnAbout','btnClearAlerts','btnEndTask'
 )) { $C[$n] = $Window.FindName($n) }
 # Warn about any controls that failed FindName
@@ -428,32 +468,57 @@ foreach ($item in @(
 $C['gridProcs'].ColumnHeaderStyle = $hdrStyle
 
 # ── Tool launch strip ──────────────────────────────────────────────────────────
-$tools = @(
-    @{ Label='Disk Cleanup';    Tip='Free up disk space (cleanmgr)';           Cmd={ Start-Process 'cleanmgr' } },
-    @{ Label='Reliability';     Tip='Windows Reliability Monitor';              Cmd={ Start-Process 'perfmon' -ArgumentList '/rel' } },
-    @{ Label='WiFi Report';     Tip='Generate & open WiFi diagnostics report';  Cmd={
-        $C['txtStatus'].Text = 'Generating WiFi report...'
-        Start-Process 'netsh' -ArgumentList 'wlan show wlanreport' -WindowStyle Hidden -Wait
-        $rpt = "$env:ProgramData\Microsoft\Windows\WlanReport\wlan-report-latest.html"
-        if (Test-Path $rpt) { Start-Process $rpt }
-        else { $C['txtStatus'].Text = '[!] WiFi report not found - adapter may not support this' }
-    }},
-    @{ Label='Services';        Tip='Windows Services manager (services.msc)';  Cmd={ Start-Process 'services.msc' } },
-    @{ Label='Resource Mon';    Tip='Detailed resource usage (resmon)';          Cmd={ Start-Process 'resmon' } },
-    @{ Label='Event Viewer';    Tip='System & application event logs';           Cmd={ Start-Process 'eventvwr' } },
-    @{ Label='Device Manager';  Tip='Manage hardware & drivers';                 Cmd={ Start-Process 'devmgmt.msc' } },
-    @{ Label='Disk Management'; Tip='Partition & format drives (diskmgmt.msc)';  Cmd={ Start-Process 'diskmgmt.msc' } },
-    @{ Label='System Info';     Tip='Full hardware & software report (msinfo32)';Cmd={ Start-Process 'msinfo32' } },
-    @{ Label='Perf Monitor';    Tip='Performance counters & logs (perfmon)';     Cmd={ Start-Process 'perfmon' } },
-    @{ Label='Task Manager';    Tip='Windows Task Manager';                      Cmd={ Start-Process 'taskmgr' } },
-    @{ Label='System Config';   Tip='Startup & boot options (msconfig)';         Cmd={ Start-Process 'msconfig' } }
+# ── Tool strip: grouped by category with small labels ─────────────────────────
+# Each group is a StackPanel with a tiny category label above the buttons,
+# separated by a subtle vertical divider between groups.
+$toolGroups = @(
+    @{
+        Category = 'MAINTENANCE'
+        Tools = @(
+            @{ Label='Disk Cleanup';  Tip='Free up disk space (cleanmgr)';          Cmd={ Start-Process 'cleanmgr' } },
+            @{ Label='System Config'; Tip='Startup, boot & services (msconfig)';    Cmd={ Start-Process 'msconfig' } },
+            @{ Label='Services';      Tip='Windows Services manager (services.msc)'; Cmd={ Start-Process 'services.msc' } }
+        )
+    },
+    @{
+        Category = 'PERFORMANCE'
+        Tools = @(
+            @{ Label='Task Manager';  Tip='Windows Task Manager (taskmgr)';          Cmd={ Start-Process 'taskmgr'  } },
+            @{ Label='Resource Mon';  Tip='Detailed real-time resource usage (resmon)'; Cmd={ Start-Process 'resmon' } },
+            @{ Label='Perf Monitor';  Tip='Performance counters & data logs (perfmon)'; Cmd={ Start-Process 'perfmon' } }
+        )
+    },
+    @{
+        Category = 'DIAGNOSTICS'
+        Tools = @(
+            @{ Label='Reliability';   Tip='Windows Reliability History (perfmon /rel)'; Cmd={ Start-Process 'perfmon' -ArgumentList '/rel' } },
+            @{ Label='Event Viewer';  Tip='System & application event logs (eventvwr)';  Cmd={ Start-Process 'eventvwr' } },
+            @{ Label='System Info';   Tip='Full hardware & software inventory (msinfo32)'; Cmd={ Start-Process 'msinfo32' } },
+            @{ Label='WiFi Report';   Tip='Generate & open Wi-Fi diagnostics report';    Cmd={
+                $C['txtStatus'].Text = 'Generating WiFi report...'
+                Start-Process 'netsh' -ArgumentList 'wlan show wlanreport' -WindowStyle Hidden -Wait
+                $rpt = "$env:ProgramData\Microsoft\Windows\WlanReport\wlan-report-latest.html"
+                if (Test-Path $rpt) { Start-Process $rpt }
+                else { $C['txtStatus'].Text = '[!] WiFi report not found - adapter may not support this' }
+            }}
+        )
+    },
+    @{
+        Category = 'HARDWARE'
+        Tools = @(
+            @{ Label='Device Manager';  Tip='Manage hardware devices & drivers (devmgmt.msc)'; Cmd={ Start-Process 'devmgmt.msc'  } },
+            @{ Label='Disk Management'; Tip='Partition & format drives (diskmgmt.msc)';         Cmd={ Start-Process 'diskmgmt.msc' } }
+        )
+    }
 )
-foreach ($t in $tools) {
+
+function New-ToolButton {
+    param([string]$Label, [string]$Tip, [scriptblock]$Cmd)
     $tb = [System.Windows.Controls.Button]::new()
-    $tb.Content         = $t.Label
-    $tb.ToolTip         = $t.Tip
-    $tb.Margin          = [System.Windows.Thickness]::new(0,0,4,0)
-    $tb.Padding         = [System.Windows.Thickness]::new(9,4,9,4)
+    $tb.Content         = $Label
+    $tb.ToolTip         = $Tip
+    $tb.Margin          = [System.Windows.Thickness]::new(0,0,3,0)
+    $tb.Padding         = [System.Windows.Thickness]::new(9,3,9,3)
     $tb.Background      = $conv.ConvertFromString('#2D3148')
     $tb.Foreground      = $conv.ConvertFromString('#CBD5E1')
     $tb.BorderBrush     = $conv.ConvertFromString('#3D4268')
@@ -461,10 +526,49 @@ foreach ($t in $tools) {
     $tb.FontFamily      = [System.Windows.Media.FontFamily]::new('Segoe UI')
     $tb.FontSize        = 11
     $tb.Cursor          = [System.Windows.Input.Cursors]::Hand
-    $cmd = $t.Cmd
-    $handler = { try { & $cmd } catch { $C['txtStatus'].Text = "[!] $($_.Exception.Message)" } }.GetNewClosure()
+    $handler = { try { & $Cmd } catch { $C['txtStatus'].Text = "[!] $($_.Exception.Message)" } }.GetNewClosure()
     $tb.Add_Click([System.Windows.RoutedEventHandler]$handler)
-    $C['pnlTools'].Children.Add($tb) | Out-Null
+    return $tb
+}
+
+$isFirstGroup = $true
+foreach ($group in $toolGroups) {
+
+    # Vertical divider between groups (not before the first)
+    if (-not $isFirstGroup) {
+        $div = [System.Windows.Controls.Border]::new()
+        $div.Width           = 1
+        $div.Background      = $conv.ConvertFromString('#2D3148')
+        $div.Margin          = [System.Windows.Thickness]::new(6,2,6,2)
+        $div.VerticalAlignment = 'Stretch'
+        $C['pnlTools'].Children.Add($div) | Out-Null
+    }
+    $isFirstGroup = $false
+
+    # Group container: category label above, buttons below
+    $grpPanel = [System.Windows.Controls.StackPanel]::new()
+    $grpPanel.Orientation = 'Vertical'
+    $grpPanel.Margin      = [System.Windows.Thickness]::new(0)
+
+    # Category label
+    $lbl = [System.Windows.Controls.TextBlock]::new()
+    $lbl.Text          = $group.Category
+    $lbl.Foreground    = $conv.ConvertFromString('#4B5563')
+    $lbl.FontSize      = 8
+    $lbl.FontWeight    = 'SemiBold'
+    $lbl.FontFamily    = [System.Windows.Media.FontFamily]::new('Segoe UI')
+    $lbl.Margin        = [System.Windows.Thickness]::new(1,0,0,3)
+    $grpPanel.Children.Add($lbl) | Out-Null
+
+    # Buttons row
+    $btnRow = [System.Windows.Controls.StackPanel]::new()
+    $btnRow.Orientation = 'Horizontal'
+    foreach ($t in $group.Tools) {
+        $btn = New-ToolButton -Label $t.Label -Tip $t.Tip -Cmd $t.Cmd
+        $btnRow.Children.Add($btn) | Out-Null
+    }
+    $grpPanel.Children.Add($btnRow) | Out-Null
+    $C['pnlTools'].Children.Add($grpPanel) | Out-Null
 }
 
 # ── Right-click context menu on process grid ───────────────────────────────────
@@ -647,6 +751,19 @@ function New-DriveCard {
 }
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
+function Format-Uptime {
+    param([TimeSpan]$Span)
+    # Always show d/h/m/s so the user knows exactly what each unit means
+    $d = [int]$Span.TotalDays
+    $h = $Span.Hours
+    $m = $Span.Minutes
+    $s = $Span.Seconds
+    if ($d -gt 0) { return "${d}d ${h}h ${m}m ${s}s" }
+    if ($h -gt 0) { return "${h}h ${m}m ${s}s"       }
+    return "${m}m ${s}s"
+}
+
+
 function Format-Bytes {
     param([long]$Bytes)
     if ($Bytes -ge 1GB) { return '{0:N1} GB' -f ($Bytes/1GB) }
@@ -669,6 +786,7 @@ $script:PrevNetIn  = 0L
 $script:PrevNetOut = 0L
 $script:StartTime  = [datetime]::Now
 $script:PrevProcCpu      = @{}
+$script:AllProcesses     = @()   # last full unfiltered process list
 $script:LastProcTime     = $null
 $script:AlertLogPath     = [System.IO.Path]::Combine($env:TEMP, "SystemMonitor_alerts.log")
 $script:CachedAdapter    = $null   # refresh every 30s
@@ -831,7 +949,19 @@ function Update-UI {
         }
     }
 
-    $C['gridProcs'].ItemsSource = $m.Processes
+    # Store full unfiltered list so the filter survives refreshes
+    $script:AllProcesses = $m.Processes
+
+    # Apply filter if one is active, otherwise show all
+    $filterText = $C['txtProcFilter'].Text.Trim()
+    $hasFilter  = ($filterText -ne '' -and $filterText -ne $C['txtProcFilter'].Tag)
+    if ($hasFilter) {
+        $C['gridProcs'].ItemsSource = @($script:AllProcesses) | Where-Object {
+            $_.Name -like "*$filterText*" -or "$($_.PID)" -like "*$filterText*"
+        }
+    } else {
+        $C['gridProcs'].ItemsSource = $script:AllProcesses
+    }
 
     $ts = $m.Timestamp.ToString('HH:mm:ss')
     $newAlert = $false
@@ -932,8 +1062,16 @@ function Update-UI {
         }
     }
 
-    $up = [datetime]::Now - $script:StartTime
-    $C['txtUptime'].Text = "Up: $([int]$up.TotalHours)h $($up.Minutes)m $($up.Seconds)s"
+    # App uptime
+    $appUp = [datetime]::Now - $script:StartTime
+    $C['txtUptime'].Text = Format-Uptime $appUp
+
+    # System uptime (from Win32_OperatingSystem.LastBootUpTime - already fetched in Get-Metrics)
+    try {
+        $bootTime = (Get-CimInstance Win32_OperatingSystem -ErrorAction Stop).LastBootUpTime
+        $sysUp    = [datetime]::Now - $bootTime
+        $C['txtSysUptime'].Text = Format-Uptime $sysUp
+    } catch { $C['txtSysUptime'].Text = 'N/A' }
     $C['txtTime'].Text   = $m.Timestamp.ToString('ddd dd MMM yyyy  HH:mm:ss')
 
     # 10-second rolling average for status bar
@@ -1249,51 +1387,144 @@ function Connect-RemoteHost {
     if ([string]::IsNullOrEmpty($host_) -or $host_ -eq 'localhost' -or $host_ -eq '.') {
         Disconnect-RemoteHost; return
     }
-    $C['txtStatus'].Text      = "Connecting to $host_..."
-    $C['ellStatus'].Fill      = $conv.ConvertFromString('#F97316')
+
+    $C['txtStatus'].Text       = "Connecting to $host_..."
+    $C['ellLocalStatus'].Fill  = $conv.ConvertFromString('#10B981')   # local active
+    $C['ellStatus'].Fill       = $conv.ConvertFromString('#F97316')   # remote: connecting
     $C['btnConnect'].IsEnabled = $false
-    try {
-        if ($script:CimSession) { Remove-CimSession $script:CimSession -EA SilentlyContinue }
-        $opt = New-CimSessionOption -Protocol Wsman -ErrorAction Stop
-        $script:CimSession = New-CimSession -ComputerName $host_ -SessionOption $opt -ErrorAction Stop
-        $script:RemoteHost = $host_
 
-        # Fetch remote OS for title
-        $remoteOs = (Get-CimInstance Win32_OperatingSystem -CimSession $script:CimSession -EA SilentlyContinue).Caption
-        $C['txtHostname'].Text = "$host_  |  $remoteOs"
-
-        $C['ellStatus'].Fill      = $conv.ConvertFromString('#10B981')
-        $C['txtRemoteStatus'].Text = "Connected: $host_"
-        $C['txtRemoteStatus'].Foreground = $conv.ConvertFromString('#10B981')
-        $C['btnDisconnect'].IsEnabled    = $true
-        $C['btnConnect'].IsEnabled       = $false
-
-        # Remember hostname in dropdown
-        $existing = @($C['cmbRemoteHost'].Items | ForEach-Object { "$_" })
-        if ($existing -notcontains $host_) { $C['cmbRemoteHost'].Items.Add($host_) | Out-Null }
-
-        # Reset CPU delta cache on new connection
-        $script:PrevProcCpu = @{}
-        $script:CachedAdapter = $null
-        $script:CachedBattery = $null
-        $script:CachedGateway = $host_
-
-        Update-UI (Get-Metrics)
-    } catch {
-        $C['ellStatus'].Fill      = $conv.ConvertFromString('#EF4444')
-        $C['txtRemoteStatus'].Text = "Failed: $($_.Exception.Message)"
-        $C['txtRemoteStatus'].Foreground = $conv.ConvertFromString('#EF4444')
-        $C['btnConnect'].IsEnabled = $true
-        $script:CimSession = $null; $script:RemoteHost = ''
+    # Build credential if username provided
+    $user = $C['txtRemoteUser'].Text.Trim()
+    $pass = $C['pwdRemote'].Password
+    $cred = $null
+    if (-not [string]::IsNullOrEmpty($user)) {
+        $secPass = ConvertTo-SecureString $pass -AsPlainText -Force
+        $cred    = [System.Management.Automation.PSCredential]::new($user, $secPass)
     }
+
+    if ($script:CimSession) { Remove-CimSession $script:CimSession -EA SilentlyContinue }
+
+    # ── Secure auth chain (NTLM deliberately excluded - deprecated & relay-vulnerable) ──
+    # Attempt 1: Kerberos over WSMan (HTTPS port 5986 if available, HTTP 5985 fallback)
+    #   - Best choice for domain-joined machines; mutual authentication, no credential exposure
+    #   - Requires both machines in same domain / trusted forest
+    # Attempt 2: Kerberos over WSMan HTTP (port 5985)
+    #   - Same security as above, explicit HTTP for environments without HTTPS listener
+    # Attempt 3: CredSSP over WSMan
+    #   - Delegates credentials to remote; works cross-domain / workgroup with explicit creds
+    #   - REQUIRES: Enable-WSManCredSSP -Role Client -DelegateComputer 'host' (local)
+    #               Enable-WSManCredSSP -Role Server (remote)
+    #   - Only attempted when explicit credentials are supplied
+    # Note: DCOM/NTLM intentionally omitted - NTLM is deprecated (MS-NLMP removal in progress)
+    $script:CimSession = $null
+    $lastError         = $null
+    $attemptedMethods  = @()
+
+    # Attempt 1 & 2: Kerberos (domain machines, no credential needed or domain cred)
+    foreach ($enc in @('Encrypted','Default')) {
+        try {
+            $C['txtStatus'].Text = "Trying Kerberos/WSMan ($enc) -> $host_..."
+            $opt = New-CimSessionOption -Protocol Wsman -PacketEncryption $enc
+            $sp  = @{ ComputerName=$host_; SessionOption=$opt
+                      Authentication='Kerberos'; ErrorAction='Stop' }
+            if ($cred) { $sp['Credential'] = $cred }
+            $script:CimSession = New-CimSession @sp
+            $attemptedMethods += "Kerberos/WSMan"
+            $lastError = $null; break
+        } catch { $lastError = $_; $script:CimSession = $null }
+    }
+
+    # Attempt 3: CredSSP (only with explicit creds - never with implicit Windows auth)
+    if ($null -eq $script:CimSession -and $null -ne $cred) {
+        try {
+            $C['txtStatus'].Text = "Trying CredSSP/WSMan -> $host_..."
+            $opt = New-CimSessionOption -Protocol Wsman -PacketEncryption Encrypted
+            $sp  = @{ ComputerName=$host_; SessionOption=$opt; Credential=$cred
+                      Authentication='CredSSP'; ErrorAction='Stop' }
+            $script:CimSession = New-CimSession @sp
+            $attemptedMethods += "CredSSP/WSMan"
+            $lastError = $null
+        } catch { $lastError = $_; $script:CimSession = $null }
+    }
+
+    if ($null -eq $script:CimSession) {
+        $msg  = if ($lastError) { $lastError.Exception.Message } else { 'Unknown error' }
+        $hint = switch -Regex ($msg) {
+            'WinRM|winrm' {
+                "WinRM not enabled on $host_`n" +
+                "Fix (run on ${host_} as Admin): Enable-PSRemoting -Force"
+            }
+            'Kerberos|not joined|authentication scheme' {
+                "Kerberos failed - $host_ may not be domain-joined.`n" +
+                "Workgroup fix - run on YOUR machine as Admin:`n" +
+                "  Set-Item WSMan:\localhost\Client\TrustedHosts -Value '$host_' -Force -Concatenate`n" +
+                "Then supply credentials in the User/Pass fields and reconnect.`n" +
+                "For CredSSP also run: Enable-WSManCredSSP -Role Client -DelegateComputer '$host_'"
+            }
+            'CredSSP|credssp' {
+                "CredSSP not enabled.`n" +
+                "Run on YOUR machine: Enable-WSManCredSSP -Role Client -DelegateComputer '$host_'`n" +
+                "Run on ${host_}:      Enable-WSManCredSSP -Role Server"
+            }
+            'Access.*denied|Logon failure|0x8009030e' {
+                if ($cred) { "Credentials rejected by $host_. Verify username (domain\user or .\user) and password." }
+                else        { "Access denied. Enter credentials in the User / Pass fields." }
+            }
+            'timed out|No connection|cannot connect|RPC' {
+                "Cannot reach $host_ on port 5985/5986. Check:`n" +
+                "  1. Hostname / IP is correct`n  2. Windows Firewall allows WinRM`n" +
+                "  3. WinRM started: winrm quickconfig"
+            }
+            'TrustedHosts' {
+                "Run on YOUR machine as Admin:`n" +
+                "  Set-Item WSMan:\localhost\Client\TrustedHosts -Value '$host_' -Force -Concatenate"
+            }
+            default { $msg }
+        }
+
+        $C['ellLocalStatus'].Fill         = $conv.ConvertFromString('#10B981')   # local active
+        $C['ellStatus'].Fill              = $conv.ConvertFromString('#EF4444')   # remote: failed
+        $C['txtRemoteStatus'].Text        = 'Connection failed -- see status bar'
+        $C['txtRemoteStatus'].Foreground  = $conv.ConvertFromString('#EF4444')
+        $C['btnConnect'].IsEnabled        = $true
+        $script:RemoteHost                = ''
+        $C['txtStatus'].Text              = "[!] $hint"
+        return
+    }
+
+    # ── Connected successfully ────────────────────────────────────────────────
+    $script:RemoteHost = $host_
+    $remoteOs = try {
+        (Get-CimInstance Win32_OperatingSystem -CimSession $script:CimSession -EA Stop).Caption
+    } catch { "Remote: $host_" }
+
+    $proto = if ($attemptedMethods) { $attemptedMethods[-1] } else { 'WSMan' }
+    $C['txtHostname'].Text = "$host_  |  $remoteOs"
+    $C['ellLocalStatus'].Fill         = $conv.ConvertFromString('#4B5563')   # remote is primary
+    $C['ellStatus'].Fill              = $conv.ConvertFromString('#10B981')   # remote: connected
+    $C['txtRemoteStatus'].Text        = "Connected ($proto): $host_"
+    $C['txtRemoteStatus'].Foreground  = $conv.ConvertFromString('#10B981')
+    $C['btnDisconnect'].IsEnabled     = $true
+    $C['btnConnect'].IsEnabled        = $false
+
+    $existing = @($C['cmbRemoteHost'].Items | ForEach-Object { "$_" })
+    if ($existing -notcontains $host_) { $C['cmbRemoteHost'].Items.Add($host_) | Out-Null }
+
+    $script:PrevProcCpu   = @{}
+    $script:CachedAdapter = $null
+    $script:CachedBattery = $null
+    $script:CachedGateway = $host_
+
+    Update-UI (Get-Metrics)
 }
 
 function Disconnect-RemoteHost {
     if ($script:CimSession) { Remove-CimSession $script:CimSession -EA SilentlyContinue }
     $script:CimSession = $null; $script:RemoteHost = ''
-    $C['ellStatus'].Fill      = $conv.ConvertFromString('#4B5563')
+    $C['ellLocalStatus'].Fill = $conv.ConvertFromString('#10B981')   # local active again
+    $C['ellStatus'].Fill      = $conv.ConvertFromString('#4B5563')   # remote: disconnected
     $C['txtRemoteStatus'].Text = 'Local machine'
-    $C['txtRemoteStatus'].Foreground = $conv.ConvertFromString('#8B8FA8')
+    $C['txtRemoteStatus'].Foreground = $conv.ConvertFromString('#4B5563')
     $C['btnDisconnect'].IsEnabled = $false
     $C['btnConnect'].IsEnabled    = $true
     $C['cmbRemoteHost'].Text      = ''
@@ -1490,7 +1721,8 @@ $Timer.Add_Tick({
 # ── Wire controls ──────────────────────────────────────────────────────────────
 $osName = Get-FriendlyOS
 $C['txtHostname'].Text = "$([Environment]::MachineName)  |  $osName"
-$C['ellStatus'].Fill = $conv.ConvertFromString('#4B5563')
+$C['ellLocalStatus'].Fill = $conv.ConvertFromString('#10B981')   # local always on at startup
+$C['ellStatus'].Fill      = $conv.ConvertFromString('#4B5563')   # remote: not connected
 
 $C['btnRefresh'].Add_Click({
     try   { Update-UI (Get-Metrics) }
@@ -1499,6 +1731,9 @@ $C['btnRefresh'].Add_Click({
 $C['chkAutoRefresh'].Add_Checked({   $C['txtStatus'].Text = 'Auto-refresh ON' })
 $C['chkAutoRefresh'].Add_Unchecked({ $C['txtStatus'].Text = 'Auto-refresh OFF -- grid is frozen for selection' })
 $C['btnConnect'].Add_Click({    Connect-RemoteHost })
+
+# Quick-fix button: add remote host to TrustedHosts (shown in status bar tip)
+# User can run: Set-Item WSMan:\localhost\Client\TrustedHosts -Value 'hostname' -Force -Concatenate
 $C['btnDisconnect'].Add_Click({ Disconnect-RemoteHost })
 $C['cmbRemoteHost'].Add_KeyDown({
     param($s,$e)
@@ -1507,16 +1742,14 @@ $C['cmbRemoteHost'].Add_KeyDown({
 
 # Process filter
 $C['txtProcFilter'].Add_TextChanged({
-    if ($C['txtProcFilter'].Text -ne $C['txtProcFilter'].Tag) {
-        $filterText = $C['txtProcFilter'].Text.Trim()
-        if ([string]::IsNullOrEmpty($filterText)) { return }
-        $current = $C['gridProcs'].ItemsSource
-        if ($null -ne $current) {
-            $filtered = @($current) | Where-Object {
+    $filterText = $C['txtProcFilter'].Text.Trim()
+    $hasFilter  = ($filterText -ne '' -and $filterText -ne $C['txtProcFilter'].Tag)
+    if ($null -ne $script:AllProcesses) {
+        $C['gridProcs'].ItemsSource = if ($hasFilter) {
+            @($script:AllProcesses) | Where-Object {
                 $_.Name -like "*$filterText*" -or "$($_.PID)" -like "*$filterText*"
             }
-            $C['gridProcs'].ItemsSource = $filtered
-        }
+        } else { $script:AllProcesses }
     }
 })
 $C['btnProcFilterClear'].Add_Click({
