@@ -1,6 +1,6 @@
 #Requires -Version 5.1
 <#
-.SYNOPSIS  System Monitor v1.0.0 - A WPF performance dashboard for Windows.
+.SYNOPSIS  System Monitor v1.2.0 - A WPF performance dashboard for Windows.
 .DESCRIPTION
     Real-time monitoring of CPU, RAM, Disk and Network with process management,
     remote host support, alert thresholds, and CSV/Markdown/HTML export.
@@ -9,7 +9,7 @@
       MINOR - new features, backwards-compatible
       PATCH - bug fixes, performance improvements
 .AUTHOR  Christopher Munn
-.VERSION 1.0.0
+.VERSION 1.2.0
 .LINK    https://github.com/ChrisMunnPS/SystemMonitor
 .EXAMPLE .\SystemMonitor.ps1
 .EXAMPLE .\SystemMonitor.ps1 -RefreshSeconds 3 -CpuThreshold 80 -RamThreshold 85
@@ -24,7 +24,7 @@ param(
 )
 
 # ── Version (SemVer 2.0.0) ────────────────────────────────────────────────────
-$script:Version = '1.0.0'
+$script:Version = '1.2.0'
 $script:AppName = 'System Monitor'
 
 if (-not $env:WPF_STA_CHILD) {
@@ -44,14 +44,12 @@ Add-Type -AssemblyName System.Windows.Forms
 function Get-FriendlyOS {
     try {
         $r   = Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion' -EA Stop
-        $nm  = $r.ProductName      # May say "Windows 10" even on Win 11
-        $dv  = $r.DisplayVersion   # e.g. "24H2"
+        $nm  = $r.ProductName
+        $dv  = $r.DisplayVersion
         $bn  = [int]$r.CurrentBuildNumber
-        # Build 22000+ is Windows 11; registry ProductName is wrong on some systems
         if ($nm -match 'Windows 10' -and $bn -ge 22000) {
             $nm = $nm -replace 'Windows 10','Windows 11'
         }
-        # Also catch cases where edition is missing from ProductName
         if ($nm -notmatch 'Windows 1[01]') {
             $caption = (Get-CimInstance Win32_OperatingSystem -EA SilentlyContinue).Caption
             if ($caption) { $nm = $caption }
@@ -66,12 +64,13 @@ function Get-FriendlyOS {
 <Window
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-    Title="System Monitor v1.0.0"
-    Height="720" Width="1150" MinHeight="540" MinWidth="820"
+    Title="System Monitor v1.2.0"
+    Height="820" Width="1280" MinHeight="600" MinWidth="920"
     WindowStartupLocation="CenterScreen"
     Background="#0F1117">
   <Grid Margin="8">
     <Grid.RowDefinitions>
+      <RowDefinition Height="Auto"/>
       <RowDefinition Height="Auto"/>
       <RowDefinition Height="Auto"/>
       <RowDefinition Height="Auto"/>
@@ -88,7 +87,7 @@ function Get-FriendlyOS {
         <ColumnDefinition Width="Auto"/>
       </Grid.ColumnDefinitions>
       <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-        <TextBlock Text="SYSTEM MONITOR" Foreground="#E2E8F0"
+        <TextBlock x:Name="txtAppTitle" Text="SYSTEM MONITOR" Foreground="#E2E8F0"
                    FontSize="15" FontWeight="Bold" FontFamily="Segoe UI" VerticalAlignment="Center"/>
         <TextBlock x:Name="txtHostname" Foreground="#6C63FF" FontSize="11"
                    FontFamily="Segoe UI" VerticalAlignment="Center" Margin="12,0,0,0"/>
@@ -102,7 +101,10 @@ function Get-FriendlyOS {
         <Button x:Name="btnExportMd"   Content="Export Markdown" Margin="3,0" Padding="12,7"/>
         <Button x:Name="btnExportHtml" Content="Export HTML"     Margin="3,0" Padding="12,7"/>
         <Button x:Name="btnSettings"   Content="Thresholds"  Margin="3,0" Padding="12,7"/>
-        <Button x:Name="btnAbout"      Content="About"       Margin="3,0" Padding="12,7"/>
+        <Button x:Name="btnTheme"      Content="Light Mode"    Margin="3,0" Padding="12,7"/>
+        <Button x:Name="btnCores"       Content="Cores"         Margin="3,0" Padding="12,7"
+                ToolTip="Show/hide per-core CPU usage bars"/>
+        <Button x:Name="btnAbout"      Content="About"         Margin="3,0" Padding="12,7"/>
       </StackPanel>
     </Grid>
 
@@ -164,21 +166,32 @@ function Get-FriendlyOS {
     </Border>
 
     <!-- TOOL LAUNCH STRIP -->
-    <Border Grid.Row="2" Background="#1A1D27" CornerRadius="8" Padding="10,7"
+    <Border Grid.Row="2" Background="#1A1D27" CornerRadius="8" Padding="8,6"
             Margin="5,0,5,6" BorderBrush="#2D3148" BorderThickness="1">
       <DockPanel>
         <TextBlock Text="TOOLS" Foreground="#8B8FA8" FontSize="10" FontFamily="Segoe UI"
-                   FontWeight="SemiBold" VerticalAlignment="Center" Margin="0,0,10,0"
+                   FontWeight="SemiBold" VerticalAlignment="Top" Margin="0,2,10,0"
                    DockPanel.Dock="Left"/>
-        <ScrollViewer HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Disabled"
-                      CanContentScroll="True">
-          <StackPanel x:Name="pnlTools" Orientation="Horizontal"/>
+        <ScrollViewer HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto"
+                      CanContentScroll="False">
+          <Grid x:Name="pnlTools">
+            <Grid.RowDefinitions>
+              <RowDefinition Height="Auto"/>
+              <RowDefinition Height="Auto"/>
+            </Grid.RowDefinitions>
+            <Grid.ColumnDefinitions>
+              <ColumnDefinition Width="Auto"/>
+              <ColumnDefinition Width="Auto"/>
+              <ColumnDefinition Width="Auto"/>
+              <ColumnDefinition Width="Auto"/>
+            </Grid.ColumnDefinitions>
+          </Grid>
         </ScrollViewer>
       </DockPanel>
     </Border>
 
     <!-- KPI CARDS -->
-    <Grid Grid.Row="3">
+    <Grid Grid.Row="3" MinHeight="120">
       <Grid.ColumnDefinitions>
         <ColumnDefinition Width="*"/>
         <ColumnDefinition Width="*"/>
@@ -186,63 +199,113 @@ function Get-FriendlyOS {
         <ColumnDefinition Width="*"/>
       </Grid.ColumnDefinitions>
 
-      <Border Grid.Column="0" Background="#1A1D27" CornerRadius="8" Padding="10,10" Margin="4"
-              BorderBrush="#2D3148" BorderThickness="1">
-        <StackPanel>
-          <TextBlock Text="CPU USAGE" Foreground="#8B8FA8" FontSize="10" FontFamily="Segoe UI" FontWeight="SemiBold"/>
-          <Grid Margin="0,3,0,0">
+      <Border x:Name="cardCpu" Grid.Column="0" Background="#1A1D27" CornerRadius="8" Padding="10,10" Margin="4"
+              BorderBrush="#2D3148" BorderThickness="1" MinHeight="120">
+        <Grid>
+          <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+          </Grid.RowDefinitions>
+          <TextBlock Grid.Row="0" Text="CPU USAGE" Foreground="#8B8FA8" FontSize="10" FontFamily="Segoe UI" FontWeight="SemiBold"/>
+          <Grid Grid.Row="1" Margin="0,3,0,0">
             <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
             <TextBlock x:Name="txtCpu" Text="0%" Foreground="#E2E8F0" FontSize="26" FontFamily="Segoe UI" FontWeight="Bold"/>
             <TextBlock x:Name="txtCpuAlert" Grid.Column="1" Text="[!]" FontSize="14" Foreground="#F97316" VerticalAlignment="Top" Visibility="Collapsed"/>
           </Grid>
-          <ProgressBar x:Name="barCpu" Maximum="100" Height="6" Margin="0,5,0,0" BorderThickness="0" Background="#2D3148" Foreground="#6C63FF"/>
-          <TextBlock x:Name="txtCpuDetail" Foreground="#8B8FA8" FontSize="10" FontFamily="Segoe UI" Margin="0,5,0,0"/>
-        </StackPanel>
+          <ProgressBar Grid.Row="2" x:Name="barCpu" Maximum="100" Height="6" Margin="0,5,0,0" BorderThickness="0" Background="#2D3148" Foreground="#6C63FF"/>
+          <Canvas Grid.Row="3" x:Name="sparkCpu" Margin="0,3,0,3" Background="Transparent" ToolTip="CPU trend - last 60 samples" MinHeight="20"/>
+
+        </Grid>
       </Border>
 
-      <Border Grid.Column="1" Background="#1A1D27" CornerRadius="8" Padding="10,10" Margin="4"
-              BorderBrush="#2D3148" BorderThickness="1">
-        <StackPanel>
-          <TextBlock Text="MEMORY" Foreground="#8B8FA8" FontSize="10" FontFamily="Segoe UI" FontWeight="SemiBold"/>
-          <Grid Margin="0,3,0,0">
+      <Border x:Name="cardRam" Grid.Column="1" Background="#1A1D27" CornerRadius="8" Padding="10,10" Margin="4"
+              BorderBrush="#2D3148" BorderThickness="1" MinHeight="120">
+        <Grid>
+          <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+          </Grid.RowDefinitions>
+          <TextBlock Grid.Row="0" Text="MEMORY" Foreground="#8B8FA8" FontSize="10" FontFamily="Segoe UI" FontWeight="SemiBold"/>
+          <Grid Grid.Row="1" Margin="0,3,0,0">
             <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
             <TextBlock x:Name="txtRam" Text="0%" Foreground="#E2E8F0" FontSize="26" FontFamily="Segoe UI" FontWeight="Bold"/>
             <TextBlock x:Name="txtRamAlert" Grid.Column="1" Text="[!]" FontSize="14" Foreground="#F97316" VerticalAlignment="Top" Visibility="Collapsed"/>
           </Grid>
-          <ProgressBar x:Name="barRam" Maximum="100" Height="6" Margin="0,5,0,0" BorderThickness="0" Background="#2D3148" Foreground="#6C63FF"/>
-          <TextBlock x:Name="txtRamDetail" Foreground="#8B8FA8" FontSize="10" FontFamily="Segoe UI" Margin="0,5,0,0"/>
-        </StackPanel>
+          <ProgressBar Grid.Row="2" x:Name="barRam" Maximum="100" Height="6" Margin="0,5,0,0" BorderThickness="0" Background="#2D3148" Foreground="#6C63FF"/>
+          <Canvas Grid.Row="3" x:Name="sparkRam" Margin="0,3,0,3" Background="Transparent" ToolTip="RAM trend - last 60 samples" MinHeight="20"/>
+
+        </Grid>
       </Border>
 
-      <Border Grid.Column="2" Background="#1A1D27" CornerRadius="8" Padding="10,10" Margin="4"
-              BorderBrush="#2D3148" BorderThickness="1">
-        <StackPanel>
-          <TextBlock Text="PRIMARY DISK" Foreground="#8B8FA8" FontSize="10" FontFamily="Segoe UI" FontWeight="SemiBold"/>
-          <Grid Margin="0,3,0,0">
+      <Border x:Name="cardDisk" Grid.Column="2" Background="#1A1D27" CornerRadius="8" Padding="10,10" Margin="4"
+              BorderBrush="#2D3148" BorderThickness="1" MinHeight="120">
+        <Grid>
+          <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+          </Grid.RowDefinitions>
+          <TextBlock Grid.Row="0" Text="PRIMARY DISK" Foreground="#8B8FA8" FontSize="10" FontFamily="Segoe UI" FontWeight="SemiBold"/>
+          <Grid Grid.Row="1" Margin="0,3,0,0">
             <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
             <TextBlock x:Name="txtDisk" Text="0%" Foreground="#E2E8F0" FontSize="26" FontFamily="Segoe UI" FontWeight="Bold"/>
             <TextBlock x:Name="txtDiskAlert" Grid.Column="1" Text="[!]" FontSize="14" Foreground="#F97316" VerticalAlignment="Top" Visibility="Collapsed"/>
           </Grid>
-          <ProgressBar x:Name="barDisk" Maximum="100" Height="6" Margin="0,5,0,0" BorderThickness="0" Background="#2D3148" Foreground="#6C63FF"/>
-          <TextBlock x:Name="txtDiskDetail" Foreground="#8B8FA8" FontSize="10" FontFamily="Segoe UI" Margin="0,5,0,0"/>
-        </StackPanel>
+          <ProgressBar Grid.Row="2" x:Name="barDisk" Maximum="100" Height="6" Margin="0,5,0,0" BorderThickness="0" Background="#2D3148" Foreground="#6C63FF"/>
+          <Canvas Grid.Row="3" x:Name="sparkDisk" Margin="0,3,0,3" Background="Transparent" ToolTip="DISK trend - last 60 samples" MinHeight="20"/>
+
+        </Grid>
       </Border>
 
       <Border Grid.Column="3" Background="#1A1D27" CornerRadius="8" Padding="10,10" Margin="4"
               BorderBrush="#2D3148" BorderThickness="1">
         <StackPanel>
-          <TextBlock Text="NETWORK" Foreground="#8B8FA8" FontSize="10" FontFamily="Segoe UI" FontWeight="SemiBold"/>
+          <Grid>
+            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+            <TextBlock Text="NETWORK" Foreground="#8B8FA8" FontSize="10" FontFamily="Segoe UI" FontWeight="SemiBold" VerticalAlignment="Center"/>
+            <ComboBox x:Name="cmbNic" Grid.Column="1" FontSize="9" Height="20" Width="90"
+                      Background="#2D3148" Foreground="#8B8FA8" BorderBrush="#3D4268"
+                      ToolTip="Select network adapter to monitor (default: all adapters)"/>
+          </Grid>
           <TextBlock x:Name="txtNet" Text="OUT: 0  IN: 0" Foreground="#E2E8F0" FontSize="18" FontFamily="Segoe UI" FontWeight="Bold" Margin="0,3,0,0"/>
           <ProgressBar x:Name="barNet" Maximum="100" Height="6" Margin="0,5,0,0" BorderThickness="0" Background="#2D3148" Foreground="#6C63FF"/>
-          <TextBlock x:Name="txtNetDetail" Foreground="#8B8FA8" FontSize="10" FontFamily="Segoe UI" Margin="0,5,0,0"/>
+          <Canvas x:Name="sparkNet" Height="22" Margin="0,3,0,0" Background="Transparent" ToolTip="Network trend - last 60 samples"/>
+          <TextBlock x:Name="txtNetDetail" Foreground="#8B8FA8" FontSize="10" FontFamily="Segoe UI" Margin="0,2,0,0"/>
           <TextBlock x:Name="txtPing"      Foreground="#8B8FA8" FontSize="10" FontFamily="Segoe UI" Margin="0,2,0,0"/>
           <TextBlock x:Name="txtAdapter"   Foreground="#6B7080" FontSize="9"  FontFamily="Segoe UI" Margin="0,2,0,0" TextTrimming="CharacterEllipsis"/>
         </StackPanel>
       </Border>
     </Grid>
 
+    <!-- PER-CORE CPU PANEL (collapsed by default, toggled by Cores button) -->
+    <Border x:Name="borderCores" Grid.Row="4" Background="#1A1D27" CornerRadius="8"
+            Padding="10,8" Margin="5,0,5,4" BorderBrush="#2D3148" BorderThickness="1"
+            Height="98" Visibility="Collapsed">
+      <DockPanel>
+        <Grid DockPanel.Dock="Top" Margin="0,0,0,6">
+          <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="*"/>
+            <ColumnDefinition Width="Auto"/>
+          </Grid.ColumnDefinitions>
+          <TextBlock Text="CPU CORES" Foreground="#CBD5E1" FontSize="11"
+                     FontFamily="Segoe UI" FontWeight="SemiBold" VerticalAlignment="Center"/>
+          <TextBlock x:Name="txtCoresHint" Grid.Column="1" Foreground="#4B5563" FontSize="10"
+                     FontFamily="Segoe UI" VerticalAlignment="Center"
+                     Text="Right-click header to group processes"/>
+        </Grid>
+        <ScrollViewer HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Disabled">
+          <StackPanel x:Name="wrapCores" Orientation="Horizontal"/>
+        </ScrollViewer>
+      </DockPanel>
+    </Border>
+
     <!-- BATTERY / POWER ROW (shown only when battery detected) -->
-    <Border x:Name="borderBattery" Grid.Row="4" Background="#1A1D27" CornerRadius="8"
+    <Border x:Name="borderBattery" Grid.Row="5" Background="#1A1D27" CornerRadius="8"
             Padding="10,8" Margin="5,0,5,4" BorderBrush="#2D3148" BorderThickness="1"
             Visibility="Collapsed">
       <Grid>
@@ -252,22 +315,31 @@ function Get-FriendlyOS {
           <ColumnDefinition Width="Auto"/>
           <ColumnDefinition Width="Auto"/>
           <ColumnDefinition Width="Auto"/>
+          <ColumnDefinition Width="Auto"/>
+          <ColumnDefinition Width="Auto"/>
         </Grid.ColumnDefinitions>
-        <TextBlock Grid.Column="0" x:Name="txtBattIcon" Text="BAT" Foreground="#6C63FF"
-                   FontSize="13" FontWeight="Bold" FontFamily="Segoe UI" VerticalAlignment="Center" Margin="0,0,10,0"/>
-        <ProgressBar x:Name="barBatt" Grid.Column="1" Maximum="100" Height="8"
+        <TextBlock Grid.Column="0" x:Name="txtBattIcon" Text="&#xE83F;" Foreground="#6C63FF"
+                   FontFamily="Segoe MDL2 Assets" FontSize="16" VerticalAlignment="Center" Margin="0,0,10,0"
+                   ToolTip="Battery"/>
+        <ProgressBar x:Name="barBatt" Grid.Column="1" Maximum="100" Height="10"
                      Background="#2D3148" Foreground="#6C63FF" BorderThickness="0" VerticalAlignment="Center"/>
         <TextBlock x:Name="txtBattPct"    Grid.Column="2" Foreground="#E2E8F0" FontSize="13" FontWeight="Bold"
                    FontFamily="Segoe UI" VerticalAlignment="Center" Margin="10,0,0,0"/>
         <TextBlock x:Name="txtBattStatus" Grid.Column="3" Foreground="#8B8FA8" FontSize="11"
-                   FontFamily="Segoe UI" VerticalAlignment="Center" Margin="10,0,0,0"/>
+                   FontFamily="Segoe UI" VerticalAlignment="Center" Margin="12,0,0,0"/>
         <TextBlock x:Name="txtBattTime"   Grid.Column="4" Foreground="#8B8FA8" FontSize="11"
-                   FontFamily="Segoe UI" VerticalAlignment="Center" Margin="10,0,0,0"/>
+                   FontFamily="Segoe UI" VerticalAlignment="Center" Margin="12,0,0,0"/>
+        <TextBlock x:Name="txtBattHealth" Grid.Column="5" Foreground="#8B8FA8" FontSize="11"
+                   FontFamily="Segoe UI" VerticalAlignment="Center" Margin="12,0,0,0"
+                   ToolTip="Battery health (full charge capacity vs design capacity)"/>
+        <TextBlock x:Name="txtBattCycles" Grid.Column="6" Foreground="#6B7080" FontSize="10"
+                   FontFamily="Segoe UI" VerticalAlignment="Center" Margin="12,0,0,0"
+                   ToolTip="Charge cycle count (from BatteryCycleCount WMI — may not be available on all hardware)"/>
       </Grid>
     </Border>
 
     <!-- DETAILS -->
-    <Grid Grid.Row="5">
+    <Grid Grid.Row="6">
       <Grid.ColumnDefinitions>
         <ColumnDefinition Width="*"/>
         <ColumnDefinition Width="1.4*"/>
@@ -283,7 +355,7 @@ function Get-FriendlyOS {
         <Border Grid.Row="0" Background="#1A1D27" CornerRadius="8" Padding="14" Margin="5"
                 BorderBrush="#2D3148" BorderThickness="1">
           <DockPanel>
-            <TextBlock DockPanel.Dock="Top" Text="DRIVE USAGE" Foreground="#CBD5E1" FontSize="12"
+            <TextBlock x:Name="txtHdrDrives" DockPanel.Dock="Top" Text="DRIVE USAGE" Foreground="#CBD5E1" FontSize="12"
                        FontFamily="Segoe UI" FontWeight="SemiBold" Margin="0,0,0,8"/>
             <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
               <WrapPanel x:Name="wrapDrives" Orientation="Horizontal"/>
@@ -295,7 +367,7 @@ function Get-FriendlyOS {
                 BorderBrush="#2D3148" BorderThickness="1">
           <DockPanel>
             <Grid DockPanel.Dock="Top" Margin="0,0,0,6">
-              <TextBlock Text="ALERT LOG" Foreground="#CBD5E1" FontSize="12" FontFamily="Segoe UI" FontWeight="SemiBold"/>
+              <TextBlock x:Name="txtHdrAlerts" Text="ALERT LOG" Foreground="#CBD5E1" FontSize="12" FontFamily="Segoe UI" FontWeight="SemiBold"/>
               <Button x:Name="btnClearAlerts" Content="Clear" HorizontalAlignment="Right" Padding="8,3" FontSize="10"/>
             </Grid>
             <ListBox x:Name="lstAlerts" Background="Transparent" BorderThickness="0"
@@ -314,7 +386,7 @@ function Get-FriendlyOS {
               <ColumnDefinition Width="*"/>
               <ColumnDefinition Width="Auto"/>
             </Grid.ColumnDefinitions>
-            <TextBlock Text="TOP PROCESSES" Foreground="#CBD5E1" FontSize="12" FontFamily="Segoe UI" FontWeight="SemiBold" VerticalAlignment="Center"/>
+            <TextBlock x:Name="txtHdrProcs" Text="PROCESSES" Foreground="#CBD5E1" FontSize="12" FontFamily="Segoe UI" FontWeight="SemiBold" VerticalAlignment="Center"/>
             <StackPanel Grid.Column="1" Orientation="Horizontal">
               <Button x:Name="btnEndTask" Content="End Task" Padding="10,4" FontSize="10" Margin="0,0,8,0"/>
               <TextBlock Text="Sort:" Foreground="#8B8FA8" FontSize="11"
@@ -357,7 +429,7 @@ function Get-FriendlyOS {
     </Grid>
 
     <!-- STATUS BAR -->
-    <Border Grid.Row="6" Background="#1A1D27" CornerRadius="5" Margin="5,3,5,0"
+    <Border Grid.Row="7" Background="#1A1D27" CornerRadius="5" Margin="5,3,5,0"
             Padding="10,5" BorderBrush="#2D3148" BorderThickness="1">
       <Grid>
         <Grid.ColumnDefinitions>
@@ -396,15 +468,18 @@ $Window = [System.Windows.Markup.XamlReader]::Load($Reader)
 
 $C = @{}
 foreach ($n in @(
-    'txtHostname','txtCpu','txtCpuAlert','barCpu','txtCpuDetail',
-    'txtRam','txtRamAlert','barRam','txtRamDetail',
-    'txtDisk','txtDiskAlert','barDisk','txtDiskDetail',
+    'txtHostname','txtCpu','txtCpuAlert','barCpu','cardCpu',
+    'txtRam','txtRamAlert','barRam','cardRam',
+    'txtDisk','txtDiskAlert','barDisk','cardDisk',
     'txtNet','barNet','txtNetDetail',
     'wrapDrives','gridProcs','lstAlerts','cmbSort','pnlTools',
+    'txtHdrDrives','txtHdrAlerts','txtHdrProcs','txtAppTitle',
     'cmbRemoteHost','txtRemoteUser','pwdRemote','btnConnect','btnDisconnect','ellLocalStatus','ellStatus','txtRemoteStatus',
-    'txtPing','txtAdapter','borderBattery','barBatt','txtBattIcon','txtBattPct','txtBattStatus','txtBattTime',
+    'txtPing','txtAdapter','borderBattery','barBatt','txtBattIcon','txtBattPct','txtBattStatus','txtBattTime','txtBattHealth','txtBattCycles',
+    'borderCores','wrapCores','btnCores',
     'txtProcFilter','btnProcFilterClear',
     'txtStatus','txtSysUptime','txtUptime','txtTime',
+    'sparkCpu','sparkRam','sparkDisk','sparkNet','cmbNic','btnTheme',
     'chkAutoRefresh','btnRefresh','btnExportCsv','btnExportMd','btnExportHtml','btnSettings','btnAbout','btnClearAlerts','btnEndTask'
 )) { $C[$n] = $Window.FindName($n) }
 # Warn about any controls that failed FindName
@@ -413,6 +488,142 @@ $C.GetEnumerator() | Where-Object { $null -eq $_.Value } |
 
 # ── Shared brush converter ─────────────────────────────────────────────────────
 $conv = [System.Windows.Media.BrushConverter]::new()
+
+# ── Theme palettes ────────────────────────────────────────────────────────────
+$script:Themes = @{
+    Dark = @{
+        WinBg        = '#0F1117'; CardBg      = '#1A1D27'; CardBorder  = '#2D3148'
+        SubBg        = '#12151F'; AltRow      = '#1E2130'; InputBg     = '#2D3148'
+        FgPrimary    = '#E2E8F0'; FgSecond    = '#CBD5E1'; FgMuted     = '#8B8FA8'
+        FgDim        = '#4B5563'; FgDimmer    = '#6B7080'; Accent      = '#6C63FF'
+        Good         = '#10B981'; Warn        = '#F97316'; Danger      = '#EF4444'
+        BtnBg        = '#2D3148'; BtnBorder   = '#3D4268'; BtnFg       = '#CBD5E1'
+        ProcNormal   = '#CBD5E1'; ProcHot     = '#F97316'; ProcWarm    = '#FCD34D'
+        ProcHotBg    = '#2D1A0A'; ProcWarmBg  = '#231E10'; ProcNRBg    = '#2D1515'
+        HeaderBg     = '#0F1117'; HeaderFg    = '#8B8FA8'
+    }
+    Light = @{
+        # High-contrast light theme — all text against white/near-white backgrounds
+        WinBg        = '#F0F4F8'; CardBg      = '#FFFFFF'; CardBorder  = '#D1D9E6'
+        SubBg        = '#E8EEF5'; AltRow      = '#F0F4F8'; InputBg     = '#E8EEF5'
+        FgPrimary    = '#0F172A'; FgSecond    = '#1E293B'; FgMuted     = '#475569'
+        FgDim        = '#94A3B8'; FgDimmer    = '#CBD5E1'; Accent      = '#4F46E5'
+        Good         = '#059669'; Warn        = '#B45309'; Danger      = '#B91C1C'
+        BtnBg        = '#E2E8F0'; BtnBorder   = '#94A3B8'; BtnFg       = '#1E293B'
+        # Process grid rows — dark text on tinted backgrounds for readability
+        ProcNormal   = '#1E293B'; ProcHot     = '#7C2D12'; ProcWarm    = '#78350F'
+        ProcHotBg    = '#FEE2E2'; ProcWarmBg  = '#FEF3C7'; ProcNRBg    = '#FCE7F3'
+        HeaderBg     = '#E2E8F0'; HeaderFg    = '#334155'
+    }
+}
+
+function Get-ThemeColour { param([string]$Key)
+    return $script:Themes[$script:Theme][$Key]
+}
+function Get-Brush { param([string]$Key)
+    return $conv.ConvertFromString((Get-ThemeColour $Key))
+}
+
+function Set-UITheme {
+    $t = $script:Themes[$script:Theme]
+    $bg  = $conv.ConvertFromString($t.WinBg)
+    $cbg = $conv.ConvertFromString($t.CardBg)
+    $cbo = $conv.ConvertFromString($t.CardBorder)
+    $sub = $conv.ConvertFromString($t.SubBg)
+    $fp  = $conv.ConvertFromString($t.FgPrimary)
+    $fs  = $conv.ConvertFromString($t.FgSecond)
+    $fm  = $conv.ConvertFromString($t.FgMuted)
+    $ib  = $conv.ConvertFromString($t.InputBg)
+    $bb  = $conv.ConvertFromString($t.BtnBg)
+    $bbo = $conv.ConvertFromString($t.BtnBorder)
+    $bbf = $conv.ConvertFromString($t.BtnFg)
+    $thi = [System.Windows.Thickness]::new(1)
+
+    # Window background
+    $Window.Background = $bg
+
+    # Repaint tagged Border cards (tagged once at Window.Loaded — reliable across toggles)
+    foreach ($b in $script:CardBorders) {
+        switch ($b.Tag) {
+            'card'  { $b.Background = $cbg; $b.BorderBrush = $cbo }
+            'sub'   { $b.Background = $sub; $b.BorderBrush = $cbo }
+            'winbg' { $b.Background = $bg;  $b.BorderBrush = $cbo }
+        }
+    }
+
+    # ── Section headers ───────────────────────────────────────────────────────
+    foreach ($n in @('txtHdrDrives','txtHdrAlerts','txtHdrProcs','txtCoresHint')) {
+        if ($null -ne $C[$n]) { $C[$n].Foreground = $fm }
+    }
+    if ($null -ne $C['txtAppTitle']) { $C['txtAppTitle'].Foreground = $fp }
+
+    # KPI metric values
+    foreach ($n in @('txtCpu','txtRam','txtDisk','txtNet')) {
+        $C[$n].Foreground = $fp
+    }
+    # KPI detail / muted text
+    foreach ($n in @('txtNetDetail','txtPing','txtAdapter','txtBattStatus','txtBattTime')) {
+        if ($null -ne $C[$n]) { $C[$n].Foreground = $fm }
+    }
+    # Progress bar tracks
+    foreach ($n in @('barCpu','barRam','barDisk','barNet')) {
+        $C[$n].Background = $ib
+    }
+    # Header text
+    $C['txtHostname'].Foreground = $conv.ConvertFromString($t.Accent)
+
+    # Status bar
+    foreach ($n in @('txtStatus','txtTime','txtSysUptime','txtUptime')) {
+        if ($null -ne $C[$n]) { $C[$n].Foreground = $fm }
+    }
+    $C['txtUptime'].Foreground = $conv.ConvertFromString($t.Accent)
+
+    # DataGrids — set base colours; row colours applied per-tick in Update-UI
+    foreach ($grd in @($C['gridProcs'])) {   # gridDisks replaced by donut cards
+        $grd.Background               = [System.Windows.Media.Brushes]::Transparent
+        $grd.Foreground               = $fs
+        $grd.RowBackground            = [System.Windows.Media.Brushes]::Transparent
+        $grd.AlternatingRowBackground = $conv.ConvertFromString($t.AltRow)
+        # Column header style
+        $hdrS = [System.Windows.Style]::new([System.Windows.Controls.Primitives.DataGridColumnHeader])
+        $T2   = [System.Windows.Controls.Primitives.DataGridColumnHeader]
+        foreach ($item in @(
+            @{ DP=$T2::BackgroundProperty; Val=$conv.ConvertFromString($t.HeaderBg)  },
+            @{ DP=$T2::ForegroundProperty; Val=$conv.ConvertFromString($t.HeaderFg)  },
+            @{ DP=$T2::BorderThicknessProperty; Val=[System.Windows.Thickness]::new(0) }
+        )) { $hdrS.Setters.Add([System.Windows.Setter]::new($item.DP, $item.Val)) }
+        $grd.ColumnHeaderStyle = $hdrS
+    }
+
+    # Alert list
+    $C['lstAlerts'].Background = [System.Windows.Media.Brushes]::Transparent
+
+    # All buttons
+    foreach ($n in @('btnRefresh','btnTheme','btnCores','btnConnect','btnDisconnect',
+                     'btnProcFilterClear','btnExportCsv','btnExportMd',
+                     'btnExportHtml','btnSettings','btnAbout','btnClearAlerts')) {
+        if ($null -ne $C[$n]) {
+            $C[$n].Background     = $bb
+            $C[$n].Foreground     = $bbf
+            $C[$n].BorderBrush    = $bbo
+            $C[$n].BorderThickness = $thi
+        }
+    }
+    # End Task button stays red regardless of theme
+    $C['btnEndTask'].Background = $conv.ConvertFromString('#3D1A1A')
+    $C['btnEndTask'].Foreground = $conv.ConvertFromString('#EF4444')
+
+    # Remote status labels
+    foreach ($n in @('txtRemoteStatus')) {
+        if ($null -ne $C[$n]) { $C[$n].Foreground = $fm }
+    }
+
+    # CheckBox
+    $C['chkAutoRefresh'].Foreground = $fs
+
+    # Toggle button label
+    $C['btnTheme'].Content = if ($script:Theme -eq 'Dark') { 'Light Mode' } else { 'Dark Mode' }
+}
 
 # ── Style helper ──────────────────────────────────────────────────────────────
 function Set-ButtonStyle {
@@ -473,28 +684,30 @@ $C['gridProcs'].ColumnHeaderStyle = $hdrStyle
 # separated by a subtle vertical divider between groups.
 $toolGroups = @(
     @{
-        Category = 'MAINTENANCE'
+        Category = 'MAINTENANCE';  Colour = '#6C63FF'; Row = 0; Col = 0
         Tools = @(
-            @{ Label='Disk Cleanup';  Tip='Free up disk space (cleanmgr)';          Cmd={ Start-Process 'cleanmgr' } },
-            @{ Label='System Config'; Tip='Startup, boot & services (msconfig)';    Cmd={ Start-Process 'msconfig' } },
-            @{ Label='Services';      Tip='Windows Services manager (services.msc)'; Cmd={ Start-Process 'services.msc' } }
+            @{ Label='Disk Cleanup';       Tip='Free up disk space (cleanmgr)';                      Cmd={ Start-Process 'cleanmgr'             } },
+            @{ Label='System Config';      Tip='Startup, boot & services (msconfig)';                Cmd={ Start-Process 'msconfig'             } },
+            @{ Label='Services';           Tip='Windows Services manager (services.msc)';            Cmd={ Start-Process 'services.msc'         } },
+            @{ Label='Windows Update';     Tip='Open Windows Update (ms-settings:windowsupdate)';    Cmd={ Start-Process 'ms-settings:windowsupdate' } },
+            @{ Label='Optional Features';  Tip='Enable/disable Windows features (optionalfeatures)'; Cmd={ Start-Process 'optionalfeatures'     } }
         )
     },
     @{
-        Category = 'PERFORMANCE'
+        Category = 'PERFORMANCE';  Colour = '#F97316'; Row = 0; Col = 1
         Tools = @(
-            @{ Label='Task Manager';  Tip='Windows Task Manager (taskmgr)';          Cmd={ Start-Process 'taskmgr'  } },
-            @{ Label='Resource Mon';  Tip='Detailed real-time resource usage (resmon)'; Cmd={ Start-Process 'resmon' } },
-            @{ Label='Perf Monitor';  Tip='Performance counters & data logs (perfmon)'; Cmd={ Start-Process 'perfmon' } }
+            @{ Label='Task Manager';  Tip='Windows Task Manager (taskmgr)';                   Cmd={ Start-Process 'taskmgr'  } },
+            @{ Label='Resource Mon';  Tip='Detailed real-time resource usage (resmon)';        Cmd={ Start-Process 'resmon'   } },
+            @{ Label='Perf Monitor';  Tip='Performance counters & data logs (perfmon)';        Cmd={ Start-Process 'perfmon'  } }
         )
     },
     @{
-        Category = 'DIAGNOSTICS'
+        Category = 'DIAGNOSTICS';  Colour = '#06B6D4'; Row = 0; Col = 2
         Tools = @(
-            @{ Label='Reliability';   Tip='Windows Reliability History (perfmon /rel)'; Cmd={ Start-Process 'perfmon' -ArgumentList '/rel' } },
-            @{ Label='Event Viewer';  Tip='System & application event logs (eventvwr)';  Cmd={ Start-Process 'eventvwr' } },
-            @{ Label='System Info';   Tip='Full hardware & software inventory (msinfo32)'; Cmd={ Start-Process 'msinfo32' } },
-            @{ Label='WiFi Report';   Tip='Generate & open Wi-Fi diagnostics report';    Cmd={
+            @{ Label='Reliability';   Tip='Windows Reliability History (perfmon /rel)';        Cmd={ Start-Process 'perfmon' -ArgumentList '/rel' } },
+            @{ Label='Event Viewer';  Tip='System & application event logs (eventvwr)';        Cmd={ Start-Process 'eventvwr'  } },
+            @{ Label='System Info';   Tip='Full hardware & software inventory (msinfo32)';     Cmd={ Start-Process 'msinfo32'  } },
+            @{ Label='WiFi Report';   Tip='Generate & open Wi-Fi diagnostics report';          Cmd={
                 $C['txtStatus'].Text = 'Generating WiFi report...'
                 Start-Process 'netsh' -ArgumentList 'wlan show wlanreport' -WindowStyle Hidden -Wait
                 $rpt = "$env:ProgramData\Microsoft\Windows\WlanReport\wlan-report-latest.html"
@@ -504,10 +717,23 @@ $toolGroups = @(
         )
     },
     @{
-        Category = 'HARDWARE'
+        Category = 'HARDWARE';     Colour = '#10B981'; Row = 0; Col = 3
         Tools = @(
-            @{ Label='Device Manager';  Tip='Manage hardware devices & drivers (devmgmt.msc)'; Cmd={ Start-Process 'devmgmt.msc'  } },
-            @{ Label='Disk Management'; Tip='Partition & format drives (diskmgmt.msc)';         Cmd={ Start-Process 'diskmgmt.msc' } }
+            @{ Label='Dev. Manager';     Tip='Manage hardware devices & drivers (devmgmt.msc)';   Cmd={ Start-Process 'devmgmt.msc'                   } },
+            @{ Label='Disk Management';  Tip='Partition & format drives (diskmgmt.msc)';          Cmd={ Start-Process 'diskmgmt.msc'                  } },
+            @{ Label='System Props';     Tip='Advanced system properties (systempropertiesadvanced)'; Cmd={ Start-Process 'systempropertiesadvanced'  } }
+        )
+    },
+    @{
+        Category = 'NETWORK';      Colour = '#3B82F6'; Row = 1; Col = 1
+        Tools = @(
+            @{ Label='Network Conn.';  Tip='Network connections (ncpa.cpl)';     Cmd={ Start-Process 'ncpa.cpl'     } }
+        )
+    },
+    @{
+        Category = 'SECURITY';     Colour = '#EF4444'; Row = 1; Col = 2
+        Tools = @(
+            @{ Label='Firewall';  Tip='Windows Defender Firewall (firewall.cpl)'; Cmd={ Start-Process 'firewall.cpl' } }
         )
     }
 )
@@ -531,33 +757,26 @@ function New-ToolButton {
     return $tb
 }
 
-$isFirstGroup = $true
 foreach ($group in $toolGroups) {
+    $grpColour = if ($group.Colour) { $group.Colour } else { '#4B5563' }
 
-    # Vertical divider between groups (not before the first)
-    if (-not $isFirstGroup) {
-        $div = [System.Windows.Controls.Border]::new()
-        $div.Width           = 1
-        $div.Background      = $conv.ConvertFromString('#2D3148')
-        $div.Margin          = [System.Windows.Thickness]::new(6,2,6,2)
-        $div.VerticalAlignment = 'Stretch'
-        $C['pnlTools'].Children.Add($div) | Out-Null
-    }
-    $isFirstGroup = $false
+    # Outer cell container — add right padding to visually separate columns
+    $cell = [System.Windows.Controls.Border]::new()
+    $cell.Padding = [System.Windows.Thickness]::new(0,2,14,4)
+    [System.Windows.Controls.Grid]::SetRow($cell,    $group.Row)
+    [System.Windows.Controls.Grid]::SetColumn($cell, $group.Col)
 
-    # Group container: category label above, buttons below
     $grpPanel = [System.Windows.Controls.StackPanel]::new()
     $grpPanel.Orientation = 'Vertical'
-    $grpPanel.Margin      = [System.Windows.Thickness]::new(0)
 
-    # Category label
+    # Category label — coloured per group
     $lbl = [System.Windows.Controls.TextBlock]::new()
-    $lbl.Text          = $group.Category
-    $lbl.Foreground    = $conv.ConvertFromString('#4B5563')
-    $lbl.FontSize      = 8
-    $lbl.FontWeight    = 'SemiBold'
-    $lbl.FontFamily    = [System.Windows.Media.FontFamily]::new('Segoe UI')
-    $lbl.Margin        = [System.Windows.Thickness]::new(1,0,0,3)
+    $lbl.Text       = $group.Category
+    $lbl.Foreground = $conv.ConvertFromString($grpColour)
+    $lbl.FontSize   = 8
+    $lbl.FontWeight = 'SemiBold'
+    $lbl.FontFamily = [System.Windows.Media.FontFamily]::new('Segoe UI')
+    $lbl.Margin     = [System.Windows.Thickness]::new(1,0,0,3)
     $grpPanel.Children.Add($lbl) | Out-Null
 
     # Buttons row
@@ -565,10 +784,12 @@ foreach ($group in $toolGroups) {
     $btnRow.Orientation = 'Horizontal'
     foreach ($t in $group.Tools) {
         $btn = New-ToolButton -Label $t.Label -Tip $t.Tip -Cmd $t.Cmd
+        $btn.BorderBrush = $conv.ConvertFromString($grpColour)
         $btnRow.Children.Add($btn) | Out-Null
     }
     $grpPanel.Children.Add($btnRow) | Out-Null
-    $C['pnlTools'].Children.Add($grpPanel) | Out-Null
+    $cell.Child = $grpPanel
+    $C['pnlTools'].Children.Add($cell) | Out-Null
 }
 
 # ── Right-click context menu on process grid ───────────────────────────────────
@@ -750,6 +971,96 @@ function New-DriveCard {
     return $card
 }
 
+# ── Settings persistence ─────────────────────────────────────────────────────
+function Save-Config {
+    try {
+        $dir = Split-Path $script:ConfigPath
+        if (-not (Test-Path $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
+        # Capture current column widths (use DisplayIndex order)
+        $colWidths = @{}
+        foreach ($col in $C['gridProcs'].Columns) {
+            $w = $col.Width
+            if ($w.IsAbsolute) { $colWidths[$col.Header.ToString()] = [int]$w.Value }
+            elseif ($col.ActualWidth -gt 0) { $colWidths[$col.Header.ToString()] = [int]$col.ActualWidth }
+        }
+        $cfg = @{
+            CpuThreshold   = $script:CpuThreshold
+            RamThreshold   = $script:RamThreshold
+            DiskThreshold  = $script:DiskThreshold
+            RefreshSeconds = $script:RefreshSeconds
+            AutoExportMins = $script:AutoExportMins
+            Theme          = $script:Theme
+            NicName        = $script:SelectedNic
+            WindowLeft     = [int]$Window.Left
+            WindowTop      = [int]$Window.Top
+            WindowWidth    = [int]$Window.Width
+            WindowHeight   = [int]$Window.Height
+            WindowState    = $Window.WindowState.ToString()
+            ColWidths      = $colWidths
+        }
+        $cfg | ConvertTo-Json | Set-Content -Path $script:ConfigPath -Encoding UTF8
+    } catch {}
+}
+
+function Import-Config {
+    try {
+        if (-not (Test-Path $script:ConfigPath)) { return $null }
+        return Get-Content $script:ConfigPath -Raw | ConvertFrom-Json
+    } catch { return $null }
+}
+
+# ── Per-core bar builder ──────────────────────────────────────────────────────
+function New-CoreBar {
+    param([int]$CoreIndex, [double]$Pct, [string]$Colour)
+    $barH  = 56   # total bar height in pixels
+    $barW  = 42   # bar column width — wide enough for "100%"
+
+    $sp = [System.Windows.Controls.StackPanel]::new()
+    $sp.Orientation = 'Vertical'
+    $sp.Width   = $barW
+    $sp.Margin  = [System.Windows.Thickness]::new(2,0,2,0)
+    $sp.ToolTip = "Core $CoreIndex`: $([int]$Pct)%"
+
+    # Core label above bar
+    $num = [System.Windows.Controls.TextBlock]::new()
+    $num.Text          = "C$CoreIndex"
+    $num.FontSize      = 9
+    $num.FontFamily    = [System.Windows.Media.FontFamily]::new('Segoe UI')
+    $num.Foreground    = $conv.ConvertFromString('#8B8FA8')
+    $num.TextAlignment = 'Center'
+    $num.Margin        = [System.Windows.Thickness]::new(0,0,0,2)
+    $sp.Children.Add($num) | Out-Null
+
+    # Outer track (dark background)
+    $outer = [System.Windows.Controls.Border]::new()
+    $outer.Height      = $barH
+    $outer.Background  = $conv.ConvertFromString('#2D3148')
+    $outer.CornerRadius = [System.Windows.CornerRadius]::new(3)
+    $outer.ClipToBounds = $true
+
+    # Inner fill (grows from bottom)
+    $fillH = [Math]::Max(2, [Math]::Round($Pct / 100.0 * $barH))
+    $fill  = [System.Windows.Controls.Border]::new()
+    $fill.VerticalAlignment = 'Bottom'
+    $fill.Height      = $fillH
+    $fill.Background  = $conv.ConvertFromString($Colour)
+    $fill.CornerRadius = [System.Windows.CornerRadius]::new(2)
+    $outer.Child = $fill
+    $sp.Children.Add($outer) | Out-Null
+
+    # Pct label below bar
+    $lbl = [System.Windows.Controls.TextBlock]::new()
+    $lbl.Text          = "$([int]$Pct)%"
+    $lbl.FontSize      = 9
+    $lbl.FontFamily    = [System.Windows.Media.FontFamily]::new('Segoe UI')
+    $lbl.Foreground    = $conv.ConvertFromString($Colour)
+    $lbl.TextAlignment = 'Center'
+    $lbl.Margin        = [System.Windows.Thickness]::new(0,3,0,0)
+    $sp.Children.Add($lbl) | Out-Null
+
+    return $sp
+}
+
 # ── Helpers ────────────────────────────────────────────────────────────────────
 function Format-Uptime {
     param([TimeSpan]$Span)
@@ -771,6 +1082,54 @@ function Format-Bytes {
     if ($Bytes -ge 1KB) { return '{0:N1} KB' -f ($Bytes/1KB) }
     return "$Bytes B"
 }
+function Write-Sparkline {
+    param(
+        [System.Windows.Controls.Canvas]$Canvas,
+        [System.Collections.Generic.Queue[double]]$Data,
+        [string]$Colour = '#6C63FF',
+        [double]$MaxVal = 100
+    )
+    $Canvas.Children.Clear()
+    $pts = $Data.ToArray()
+    if ($pts.Count -lt 2) { return }
+    $w = $Canvas.ActualWidth;  if ($w -le 0) { $w = 200 }
+    $h = $Canvas.ActualHeight; if ($h -le 0) { $h = 22  }
+    $n = $pts.Count
+    $xStep = $w / ($n - 1)
+    $brush = $conv.ConvertFromString($Colour)
+    # Draw polyline
+    $poly = [System.Windows.Shapes.Polyline]::new()
+    $poly.Stroke          = $brush
+    $poly.StrokeThickness = 1.5
+    $poly.StrokeLineJoin  = 'Round'
+    for ($i = 0; $i -lt $n; $i++) {
+        $x = $i * $xStep
+        $y = $h - [Math]::Max(1, ($pts[$i] / [Math]::Max(1,$MaxVal)) * ($h - 2)) - 1
+        $poly.Points.Add([System.Windows.Point]::new($x,$y)) | Out-Null
+    }
+    $Canvas.Children.Add($poly) | Out-Null
+    # Filled area under line
+    $fill = [System.Windows.Shapes.Polygon]::new()
+    $fillBrush = $conv.ConvertFromString($Colour).Clone()
+    $fillBrush.Opacity = 0.18
+    $fill.Fill    = $fillBrush
+    $fill.Stroke  = [System.Windows.Media.Brushes]::Transparent
+    $fill.Points.Add([System.Windows.Point]::new(0, $h)) | Out-Null
+    for ($i = 0; $i -lt $n; $i++) {
+        $x = $i * $xStep
+        $y = $h - [Math]::Max(1, ($pts[$i] / [Math]::Max(1,$MaxVal)) * ($h - 2)) - 1
+        $fill.Points.Add([System.Windows.Point]::new($x,$y)) | Out-Null
+    }
+    $fill.Points.Add([System.Windows.Point]::new(($n-1)*$xStep, $h)) | Out-Null
+    $Canvas.Children.Add($fill) | Out-Null
+}
+
+function Update-Sparkline {
+    param($Queue, [double]$Value)
+    $Queue.Enqueue($Value)
+    while ($Queue.Count -gt $script:SparklineMax) { $Queue.Dequeue() | Out-Null }
+}
+
 function Set-BarColour {
     param([System.Windows.Controls.ProgressBar]$Bar,
           [double]$Value, [int]$WarnAt, [int]$CritAt = 90)
@@ -780,6 +1139,7 @@ function Set-BarColour {
 }
 
 # ── State ──────────────────────────────────────────────────────────────────────
+$script:ConfigPath     = [System.IO.Path]::Combine($env:APPDATA,'SystemMonitor','config.json')
 $script:AlertLog   = [System.Collections.Generic.List[string]]::new()
 $script:History    = [System.Collections.Generic.List[PSCustomObject]]::new()
 $script:PrevNetIn  = 0L
@@ -792,14 +1152,39 @@ $script:AlertLogPath     = [System.IO.Path]::Combine($env:TEMP, "SystemMonitor_a
 $script:CachedAdapter    = $null   # refresh every 30s
 $script:CachedAdapterAge = 0
 $script:CachedBattery    = $null
+$script:CachedBattStatic  = $null
+$script:CachedBattFull    = $null
 $script:CachedBattAge    = 0
 $script:CachedGateway    = $null
 $script:LastDriveKey     = $null
 $script:TickCount        = 0       # increment each refresh
 $script:AutoExportMins   = 0      # 0 = disabled
 $script:LastAutoExport   = [datetime]::Now
-$script:CpuCounter = [System.Diagnostics.PerformanceCounter]::new('Processor','% Processor Time','_Total')
+$script:Theme          = 'Dark'    # 'Dark' or 'Light'
+$script:SelectedNic    = ''        # empty = sum all adapters
+$script:CpuThreshold   = $CpuThreshold
+$script:RamThreshold   = $RamThreshold
+$script:DiskThreshold  = $DiskThreshold
+$script:RefreshSeconds = $RefreshSeconds
+$script:SparklineCpu   = [System.Collections.Generic.Queue[double]]::new()
+$script:SparklineRam   = [System.Collections.Generic.Queue[double]]::new()
+$script:SparklineDisk  = [System.Collections.Generic.Queue[double]]::new()
+$script:SparklineNet   = [System.Collections.Generic.Queue[double]]::new()
+$script:SparklineMax   = 60   # keep 60 data points (~2 min at 2s)
+$script:GroupProcesses  = $false   # collapse same-exe processes when $true
+$script:CardBorders      = [System.Collections.Generic.List[System.Windows.Controls.Border]]::new()
+$script:CpuCounter  = [System.Diagnostics.PerformanceCounter]::new('Processor','% Processor Time','_Total')
 $null = $script:CpuCounter.NextValue()
+# Per-core counters (one per logical processor)
+$script:CoreCounters = [System.Collections.Generic.List[System.Diagnostics.PerformanceCounter]]::new()
+for ($i = 0; $i -lt [Environment]::ProcessorCount; $i++) {
+    try {
+        $cc = [System.Diagnostics.PerformanceCounter]::new('Processor','% Processor Time',"$i")
+        $null = $cc.NextValue()   # prime - first call always returns 0
+        $script:CoreCounters.Add($cc)
+    } catch { }   # some environments restrict perf counters
+}
+$script:ShowCores = $false   # toggled by Cores button
 
 # ── Collect metrics (local or remote via CIM) ────────────────────────────────
 function Get-CimParam {
@@ -850,8 +1235,12 @@ function Get-Metrics {
     if (-not $isRemote) {
         $adapters = Get-CimInstance Win32_PerfRawData_Tcpip_NetworkInterface -EA SilentlyContinue
         if ($adapters) {
-            $netIn  = [long]($adapters | Measure-Object BytesReceivedPerSec -Sum).Sum
-            $netOut = [long]($adapters | Measure-Object BytesSentPerSec     -Sum).Sum
+            $selected = if ($script:SelectedNic -and $script:SelectedNic -ne 'All Adapters') {
+                $adapters | Where-Object { $_.Name -like "*$($script:SelectedNic)*" }
+            } else { $adapters }
+            if (-not $selected) { $selected = $adapters }   # fallback to all if name not matched
+            $netIn  = [long]($selected | Measure-Object BytesReceivedPerSec -Sum).Sum
+            $netOut = [long]($selected | Measure-Object BytesSentPerSec     -Sum).Sum
         }
     }
     $dIn  = [Math]::Max(0L, $netIn  - $script:PrevNetIn)
@@ -900,9 +1289,9 @@ function Get-Metrics {
 
     # Sort and filter top 30
     $procs = switch ($C['cmbSort'].SelectedIndex) {
-        1 { $procs | Sort-Object RAM     -Descending | Select-Object -First 30 }
-        2 { $procs | Sort-Object Name               | Select-Object -First 30 }
-        default { $procs | Sort-Object CPU -Descending | Select-Object -First 30 }
+        1 { $procs | Sort-Object RAM     -Descending }
+        2 { $procs | Sort-Object Name               }
+        default { $procs | Sort-Object CPU -Descending }
     }
 
     [PSCustomObject]@{
@@ -922,22 +1311,52 @@ function Update-UI {
     param([PSCustomObject]$m)
 
     $C['txtCpu'].Text        = "$($m.CPU)%"
-    Set-BarColour $C['barCpu']  $m.CPU     $CpuThreshold
-    $C['txtCpuDetail'].Text  = "Cores: $([Environment]::ProcessorCount)"
+    Set-BarColour $C['barCpu']  $m.CPU     $script:CpuThreshold
+    # Detail on hover via ToolTip
+    $C['cardCpu'].ToolTip    = "CPU: $($m.CPU)%  |  Cores: $([Environment]::ProcessorCount)"
+
+    # Per-core bars — only sample and draw when panel is visible
+    if ($script:ShowCores -and $C['borderCores'].Visibility -eq 'Visible') {
+        $C['wrapCores'].Children.Clear()
+        $thCores = $script:Themes[$script:Theme]
+        for ($ci = 0; $ci -lt $script:CoreCounters.Count; $ci++) {
+            $corePct = [Math]::Min(100, [Math]::Max(0,
+                           [Math]::Round($script:CoreCounters[$ci].NextValue(), 0)))
+            $coreCol = if ($corePct -ge 90) { $thCores.Danger   } `
+                  elseif ($corePct -ge 60) { $thCores.Warn    } `
+                  else                     { $thCores.Accent  }
+            $C['wrapCores'].Children.Add((New-CoreBar $ci $corePct $coreCol)) | Out-Null
+        }
+    }
 
     $C['txtRam'].Text        = "$($m.RamPct)%"
-    Set-BarColour $C['barRam']  $m.RamPct  $RamThreshold
-    $C['txtRamDetail'].Text  = "$($m.RamUsedGB) GB / $($m.RamTotalGB) GB"
+    Set-BarColour $C['barRam']  $m.RamPct  $script:RamThreshold
+    $C['cardRam'].ToolTip    = "RAM: $($m.RamPct)%  |  $($m.RamUsedGB) GB used of $($m.RamTotalGB) GB"
 
     $C['txtDisk'].Text       = "$($m.DiskPct)%"
-    Set-BarColour $C['barDisk'] $m.DiskPct $DiskThreshold
-    $C['txtDiskDetail'].Text = "$($m.DiskFreeGB) GB free of $($m.DiskTotalGB) GB"
+    Set-BarColour $C['barDisk'] $m.DiskPct $script:DiskThreshold
+    $C['cardDisk'].ToolTip   = "Disk: $($m.DiskPct)%  |  $($m.DiskFreeGB) GB free of $($m.DiskTotalGB) GB"
 
     $outStr = Format-Bytes ([long]($m.NetOutKb * 1KB))
     $inStr  = Format-Bytes ([long]($m.NetInKb  * 1KB))
     $C['txtNet'].Text        = "OUT: $outStr/s   IN: $inStr/s"
     $C['barNet'].Value       = [Math]::Min(100.0, ($m.NetInKb + $m.NetOutKb) / 10)
     $C['txtNetDetail'].Text  = "Live network I/O"
+
+    # Update sparkline data queues
+    Update-Sparkline $script:SparklineCpu  $m.CPU
+    Update-Sparkline $script:SparklineRam  $m.RamPct
+    Update-Sparkline $script:SparklineDisk $m.DiskPct
+    Update-Sparkline $script:SparklineNet  ([Math]::Min(100.0, ($m.NetInKb + $m.NetOutKb) / 10))
+
+    # Draw sparklines — deferred until canvas is laid out (ActualWidth > 0)
+    if ($C['sparkCpu'].ActualWidth -gt 0) {
+        $thSp = $script:Themes[$script:Theme]
+        Write-Sparkline $C['sparkCpu']  $script:SparklineCpu  $thSp.Accent
+        Write-Sparkline $C['sparkRam']  $script:SparklineRam  '#06B6D4'
+        Write-Sparkline $C['sparkDisk'] $script:SparklineDisk '#10B981'
+        Write-Sparkline $C['sparkNet']  $script:SparklineNet  $thSp.Accent 100
+    }
 
     # Rebuild drive pie charts only when data changes (compare key string)
     $driveKey = ($m.Disks | ForEach-Object { "$($_.Drive)$($_.UsedPct)" }) -join '|'
@@ -952,23 +1371,64 @@ function Update-UI {
     # Store full unfiltered list so the filter survives refreshes
     $script:AllProcesses = $m.Processes
 
-    # Apply filter if one is active, otherwise show all
+    # Optionally group same-exe processes into one combined row
+    $displaySource = if ($script:GroupProcesses) {
+        $m.Processes | Group-Object -Property Name | ForEach-Object {
+            if ($_.Count -eq 1) { $_.Group[0] }
+            else {
+                [PSCustomObject]@{
+                    PID     = "($($_.Count)x)"
+                    Name    = $_.Name
+                    CPU     = [Math]::Round(($_.Group | Measure-Object CPU -Sum).Sum, 1)
+                    RAM     = [Math]::Round(($_.Group | Measure-Object RAM -Sum).Sum, 1)
+                    Threads = ($_.Group | Measure-Object Threads -Sum).Sum
+                    Status  = if ($_.Group | Where-Object { $_.Status -eq 'NR' }) {'NR'} else {'OK'}
+                    _Responding = -not ($_.Group | Where-Object { -not $_._Responding })
+                }
+            }
+        }
+    } else { $m.Processes }
+
+    # Apply name/PID filter on top
     $filterText = $C['txtProcFilter'].Text.Trim()
     $hasFilter  = ($filterText -ne '' -and $filterText -ne $C['txtProcFilter'].Tag)
-    if ($hasFilter) {
-        $C['gridProcs'].ItemsSource = @($script:AllProcesses) | Where-Object {
+    $displayList = if ($hasFilter) {
+        @($displaySource) | Where-Object {
             $_.Name -like "*$filterText*" -or "$($_.PID)" -like "*$filterText*"
         }
-    } else {
-        $C['gridProcs'].ItemsSource = $script:AllProcesses
-    }
+    } else { $displaySource }
+    $C['gridProcs'].ItemsSource = $displayList
+
+    # Colour-code rows by CPU% after WPF layout pass
+    $C['gridProcs'].Dispatcher.InvokeAsync({
+        foreach ($procItem in $C['gridProcs'].Items) {
+            $dgRow = $C['gridProcs'].ItemContainerGenerator.ContainerFromItem($procItem)
+            if ($dgRow -is [System.Windows.Controls.DataGridRow]) {
+                $thm = $script:Themes[$script:Theme]
+                $isIdle = ($procItem.Name -eq 'System Idle Process' -or "$($procItem.PID)" -eq '0')
+                if (-not $isIdle -and -not $procItem._Responding) {
+                    $dgRow.Background = $conv.ConvertFromString($thm.ProcNRBg)
+                    $dgRow.Foreground = $conv.ConvertFromString($thm.Danger)
+                } elseif (-not $isIdle -and [double]$procItem.CPU -ge 50) {
+                    $dgRow.Background = $conv.ConvertFromString($thm.ProcHotBg)
+                    $dgRow.Foreground = $conv.ConvertFromString($thm.ProcHot)
+                } elseif (-not $isIdle -and [double]$procItem.CPU -ge 20) {
+                    $dgRow.Background = $conv.ConvertFromString($thm.ProcWarmBg)
+                    $dgRow.Foreground = $conv.ConvertFromString($thm.ProcWarm)
+                } else {
+                    $dgRow.Background = [System.Windows.Media.Brushes]::Transparent
+                    $dgRow.Foreground = $conv.ConvertFromString($thm.ProcNormal)
+                }
+            }
+        }
+    }, [System.Windows.Threading.DispatcherPriority]::Background) | Out-Null
 
     $ts = $m.Timestamp.ToString('HH:mm:ss')
     $newAlert = $false
     foreach ($chk in @(
-        @{Val=$m.CPU;    Thr=$CpuThreshold;  Label='CPU';  Ctrl=$C['txtCpuAlert']},
-        @{Val=$m.RamPct; Thr=$RamThreshold;  Label='RAM';  Ctrl=$C['txtRamAlert']},
-        @{Val=$m.DiskPct;Thr=$DiskThreshold; Label='Disk'; Ctrl=$C['txtDiskAlert']}
+        @{Val=$m.CPU;    Thr=$script:CpuThreshold;  Label='CPU';  Ctrl=$C['txtCpuAlert']},
+        @{Val=$m.RamPct; Thr=$script:RamThreshold;  Label='RAM';  Ctrl=$C['txtRamAlert']},
+        @{Val=$m.DiskPct;Thr=$script:DiskThreshold; Label='Disk'; Ctrl=$C['txtDiskAlert']}
     )) {
         if ($chk.Val -ge $chk.Thr) {
             $chk.Ctrl.Visibility = 'Visible'
@@ -996,19 +1456,59 @@ function Update-UI {
             $pct = $batt.EstimatedChargeRemaining
             $C['barBatt'].Value   = $pct
             $C['txtBattPct'].Text = "$pct%"
-            $hex = if ($pct -le 15) {'#EF4444'} elseif ($pct -le 30) {'#F97316'} else {'#6C63FF'}
-            $C['barBatt'].Foreground = $conv.ConvertFromString($hex)
+
+            # Colour: critical ≤15% red, low ≤30% orange, charging green, else accent
+            $isCharging = $batt.BatteryStatus -in @(2,3,6,7,8,9)
+            $hex = if     ($pct -le 15)    { '#EF4444' } `
+                   elseif ($pct -le 30)    { '#F97316' } `
+                   elseif ($isCharging)    { '#10B981' } `
+                   else                   { '#6C63FF'  }
+            $C['barBatt'].Foreground     = $conv.ConvertFromString($hex)
+            $C['txtBattIcon'].Foreground = $conv.ConvertFromString($hex)
+            $C['txtBattPct'].Foreground  = $conv.ConvertFromString($hex)
+
             $statusStr = switch ($batt.BatteryStatus) {
-                1 {'Discharging'} 2 {'AC (full)'} 3 {'Fully Charged'} 4 {'Low'} 5 {'Critical'}
-                6 {'Charging'} 7 {'Charging+High'} 8 {'Charging+Low'} 9 {'Charging+Crit'} 11 {'Partial AC'}
-                default {"Status $($batt.BatteryStatus)"}
+                1  { 'Discharging'    } 2  { 'Plugged in (full)' }
+                3  { 'Fully charged'  } 4  { 'Low'               }
+                5  { 'Critical'       } 6  { 'Charging'          }
+                7  { 'Charging (high)'} 8  { 'Charging (low)'    }
+                9  { 'Charging (crit)'} 11 { 'Partial AC'        }
+                default { "State $($batt.BatteryStatus)" }
             }
             $C['txtBattStatus'].Text = $statusStr
-            $C['txtBattIcon'].Foreground = $conv.ConvertFromString($hex)
+
+            # Time remaining / until full
             $mins = $batt.EstimatedRunTime
             $C['txtBattTime'].Text = if ($mins -and $mins -lt 65535) {
-                "$([int]($mins/60))h $($mins%60)m remaining"
+                $h = [int]($mins / 60); $m = $mins % 60
+                if ($isCharging) { "${h}h ${m}m until full" } else { "${h}h ${m}m remaining" }
             } else { '' }
+
+            # Health: FullChargeCapacity vs DesignCapacity (from Win32_Battery or BatteryStaticData)
+            try {
+                if (-not $script:CachedBattStatic -or $script:TickCount % 60 -eq 1) {
+                    $script:CachedBattStatic = Get-CimInstance -Namespace 'root\wmi' `
+                        -ClassName BatteryStaticData -ErrorAction SilentlyContinue | Select-Object -First 1
+                    $script:CachedBattFull = Get-CimInstance -Namespace 'root\wmi' `
+                        -ClassName BatteryFullChargedCapacity -ErrorAction SilentlyContinue | Select-Object -First 1
+                }
+                if ($script:CachedBattStatic -and $script:CachedBattFull) {
+                    $design  = [long]$script:CachedBattStatic.DesignedCapacity
+                    $full    = [long]$script:CachedBattFull.FullChargedCapacity
+                    if ($design -gt 0) {
+                        $health  = [Math]::Round(($full / $design) * 100, 0)
+                        $hCol    = if ($health -ge 80) { '#10B981' } elseif ($health -ge 50) { '#F97316' } else { '#EF4444' }
+                        $C['txtBattHealth'].Text       = "Health: $health%"
+                        $C['txtBattHealth'].Foreground = $conv.ConvertFromString($hCol)
+                    }
+                } else { $C['txtBattHealth'].Text = '' }
+
+                # Cycle count
+                $cycles = (Get-CimInstance -Namespace 'root\wmi' -ClassName BatteryCycleCount `
+                            -ErrorAction SilentlyContinue | Select-Object -First 1).CycleCount
+                $C['txtBattCycles'].Text = if ($cycles) { "Cycles: $cycles" } else { '' }
+            } catch { $C['txtBattHealth'].Text = ''; $C['txtBattCycles'].Text = '' }
+
         } else { $C['borderBattery'].Visibility = 'Collapsed' }
     } catch { $C['borderBattery'].Visibility = 'Collapsed' }
 
@@ -1177,6 +1677,22 @@ $($rows -join "`n")
 function Export-ToHtmlFile {
     param([string]$Path)
     $data = $script:History | Select-Object -Last 300
+
+    # Theme-aware colours — use current app theme for the report
+    $th       = $script:Themes[$script:Theme]
+    $htmlBg   = $th.WinBg
+    $htmlCard = $th.CardBg
+    $htmlBord = $th.CardBorder
+    $htmlFg1  = $th.FgPrimary
+    $htmlFg2  = $th.FgSecond
+    $htmlFg3  = $th.FgMuted
+    $htmlAlt  = $th.AltRow
+    $htmlAcct = $th.Accent
+    $htmlWarn = $th.Warn
+    $htmlTick = if ($script:Theme -eq 'Light') { '#94A3B8' } else { '#6B7080' }
+    $htmlGrid = if ($script:Theme -eq 'Light') { '#E2E8F0' } else { '#2D3148' }
+    $htmlHov  = if ($script:Theme -eq 'Light') { '#F1F5F9' } else { '#1E2130' }
+    $htmlThHd = if ($script:Theme -eq 'Light') { '#E8EEF5' } else { '#1A1D27' }
     if ($data.Count -eq 0) { return }
     $labels   = ($data | ForEach-Object { "`"$($_.Timestamp.ToString('HH:mm:ss'))`"" }) -join ','
     $cpuArr   = ($data | ForEach-Object { $_.CPU })     -join ','
@@ -1216,28 +1732,28 @@ function Export-ToHtmlFile {
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>System Monitor Report - $([Environment]::MachineName)</title>
+<title>System Monitor Report ($script:Theme mode) - $([Environment]::MachineName)</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
-body{font-family:'Segoe UI',sans-serif;background:#0F1117;color:#CBD5E1;padding:24px}
-h1{color:#6C63FF;margin-bottom:4px;font-size:22px}
-h2{color:#CBD5E1;font-size:15px;margin:28px 0 12px;border-bottom:1px solid #2D3148;padding-bottom:6px}
-.meta{color:#8B8FA8;font-size:12px;margin-bottom:20px}
+body{font-family:'Segoe UI',sans-serif;background:$htmlBg;color:$htmlFg2;padding:24px}
+h1{color:$htmlAcct;margin-bottom:4px;font-size:22px}
+h2{color:$htmlFg1;font-size:15px;margin:28px 0 12px;border-bottom:1px solid $htmlBord;padding-bottom:6px}
+.meta{color:$htmlFg3;font-size:12px;margin-bottom:20px}
 .stat-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;margin-bottom:8px}
-.stat-card{background:#1A1D27;border:1px solid #2D3148;border-radius:8px;padding:14px}
-.stat-card .val{font-size:26px;font-weight:700;color:#E2E8F0}
-.stat-card .peak{font-size:11px;color:#8B8FA8;margin-top:2px}
-.stat-card .lbl{font-size:10px;color:#8B8FA8;font-weight:600;text-transform:uppercase;margin-bottom:6px}
+.stat-card{background:$htmlCard;border:1px solid $htmlBord;border-radius:8px;padding:14px}
+.stat-card .val{font-size:26px;font-weight:700;color:$htmlFg1}
+.stat-card .peak{font-size:11px;color:$htmlFg3;margin-top:2px}
+.stat-card .lbl{font-size:10px;color:$htmlFg3;font-weight:600;text-transform:uppercase;margin-bottom:6px}
 .chart-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px}
-.chart-box,.chart-full{background:#1A1D27;border:1px solid #2D3148;border-radius:8px;padding:16px;margin-bottom:16px}
-.chart-box h3,.chart-full h3{font-size:12px;color:#8B8FA8;font-weight:600;text-transform:uppercase;margin-bottom:12px}
+.chart-box,.chart-full{background:$htmlCard;border:1px solid $htmlBord;border-radius:8px;padding:16px;margin-bottom:16px}
+.chart-box h3,.chart-full h3{font-size:12px;color:$htmlFg3;font-weight:600;text-transform:uppercase;margin-bottom:12px}
 table{border-collapse:collapse;width:100%;font-size:12px}
-th{background:#1A1D27;color:#8B8FA8;padding:8px 12px;text-align:left;font-size:11px}
-td{padding:6px 12px;border-bottom:1px solid #2D3148}
-tr:hover td{background:#1E2130}.w{color:#F97316;font-weight:bold}
+th{background:$htmlThHd;color:$htmlFg3;padding:8px 12px;text-align:left;font-size:11px}
+td{padding:6px 12px;border-bottom:1px solid $htmlBord;color:$htmlFg2}
+tr:hover td{background:$htmlHov}.w{color:$htmlWarn;font-weight:bold}
 canvas{max-height:280px}
-ul{padding-left:20px;color:#F97316;font-size:12px;font-family:Consolas,monospace}
+ul{padding-left:20px;color:$htmlWarn;font-size:12px;font-family:Consolas,monospace}
 li{margin:3px 0}
 </style>
 </head>
@@ -1277,16 +1793,17 @@ li{margin:3px 0}
 <tbody>$($rows -join '')</tbody></table>
 <script>
 const LABELS=[$labels],CPU=[$cpuArr],RAM=[$ramArr],DISK=[$diskArr],NETIN=[$netInArr],NETOUT=[$netOutArr];
-const opt=()=>({responsive:true,animation:false,plugins:{legend:{labels:{color:'#8B8FA8',font:{size:11}}},tooltip:{mode:'index',intersect:false}},scales:{x:{ticks:{color:'#6B7080',maxTicksLimit:8,font:{size:10}},grid:{color:'#2D3148'}},y:{ticks:{color:'#6B7080',font:{size:10}},grid:{color:'#2D3148'}}}});
-new Chart(document.getElementById('lineChart'),{type:'line',data:{labels:LABELS,datasets:[{label:'CPU %',data:CPU,borderColor:'#6C63FF',backgroundColor:'transparent',pointRadius:0,borderWidth:2,tension:0.3},{label:'RAM %',data:RAM,borderColor:'#06B6D4',backgroundColor:'transparent',pointRadius:0,borderWidth:2,tension:0.3},{label:'Disk %',data:DISK,borderColor:'#10B981',backgroundColor:'transparent',pointRadius:0,borderWidth:2,tension:0.3}]},options:{...opt(),scales:{x:{ticks:{color:'#6B7080',maxTicksLimit:8,font:{size:10}},grid:{color:'#2D3148'}},y:{min:0,max:100,ticks:{color:'#6B7080',font:{size:10}},grid:{color:'#2D3148'}}}}});
+const LGD='$htmlFg3',TIK='$htmlTick',GRD='$htmlGrid';
+const opt=()=>({responsive:true,animation:false,plugins:{legend:{labels:{color:LGD,font:{size:11}}},tooltip:{mode:'index',intersect:false}},scales:{x:{ticks:{color:TIK,maxTicksLimit:8,font:{size:10}},grid:{color:GRD}},y:{ticks:{color:TIK,font:{size:10}},grid:{color:GRD}}}});
+new Chart(document.getElementById('lineChart'),{type:'line',data:{labels:LABELS,datasets:[{label:'CPU %',data:CPU,borderColor:'#6C63FF',backgroundColor:'transparent',pointRadius:0,borderWidth:2,tension:0.3},{label:'RAM %',data:RAM,borderColor:'#06B6D4',backgroundColor:'transparent',pointRadius:0,borderWidth:2,tension:0.3},{label:'Disk %',data:DISK,borderColor:'#10B981',backgroundColor:'transparent',pointRadius:0,borderWidth:2,tension:0.3}]},options:{...opt(),scales:{x:{ticks:{color:TIK,maxTicksLimit:8,font:{size:10}},grid:{color:GRD}},y:{min:0,max:100,ticks:{color:TIK,font:{size:10}},grid:{color:GRD}}}}});
 new Chart(document.getElementById('areaChart'),{type:'line',data:{labels:LABELS,datasets:[{label:'Net Out',data:NETOUT,borderColor:'#F97316',backgroundColor:'rgba(249,115,22,0.3)',fill:true,pointRadius:0,tension:0.3},{label:'Net In',data:NETIN,borderColor:'#6C63FF',backgroundColor:'rgba(108,99,255,0.3)',fill:true,pointRadius:0,tension:0.3}]},options:opt()});
 const N=40,SL=Math.max(0,LABELS.length-N),bl=LABELS.slice(SL),bc=CPU.slice(SL),br=RAM.slice(SL),bd=DISK.slice(SL),bi=NETIN.slice(SL),bo=NETOUT.slice(SL);
-new Chart(document.getElementById('barChart'),{type:'bar',data:{labels:bl,datasets:[{label:'CPU %',data:bc,backgroundColor:'rgba(108,99,255,0.8)'},{label:'RAM %',data:br,backgroundColor:'rgba(6,182,212,0.8)'},{label:'Disk %',data:bd,backgroundColor:'rgba(16,185,129,0.8)'}]},options:{...opt(),scales:{x:{ticks:{color:'#6B7080',maxTicksLimit:10,font:{size:9}},grid:{color:'#2D3148'}},y:{min:0,max:100,ticks:{color:'#6B7080',font:{size:10}},grid:{color:'#2D3148'}}}}});
+new Chart(document.getElementById('barChart'),{type:'bar',data:{labels:bl,datasets:[{label:'CPU %',data:bc,backgroundColor:'rgba(108,99,255,0.8)'},{label:'RAM %',data:br,backgroundColor:'rgba(6,182,212,0.8)'},{label:'Disk %',data:bd,backgroundColor:'rgba(16,185,129,0.8)'}]},options:{...opt(),scales:{x:{ticks:{color:TIK,maxTicksLimit:10,font:{size:9}},grid:{color:GRD}},y:{min:0,max:100,ticks:{color:TIK,font:{size:10}},grid:{color:GRD}}}}});
 new Chart(document.getElementById('netBar'),{type:'bar',data:{labels:bl,datasets:[{label:'Net In',data:bi,backgroundColor:'rgba(108,99,255,0.8)'},{label:'Net Out',data:bo,backgroundColor:'rgba(249,115,22,0.8)'}]},options:opt()});
-new Chart(document.getElementById('scatter1'),{type:'scatter',data:{datasets:[{label:'CPU vs Net In',data:[$scatterCpuNet],backgroundColor:'rgba(108,99,255,0.6)',pointRadius:3}]},options:{...opt(),scales:{x:{title:{display:true,text:'CPU %',color:'#8B8FA8'},ticks:{color:'#6B7080'},grid:{color:'#2D3148'}},y:{title:{display:true,text:'Net In KB/s',color:'#8B8FA8'},ticks:{color:'#6B7080'},grid:{color:'#2D3148'}}}}});
-new Chart(document.getElementById('scatter2'),{type:'scatter',data:{datasets:[{label:'CPU vs RAM',data:[$scatterCpuRam],backgroundColor:'rgba(6,182,212,0.6)',pointRadius:3}]},options:{...opt(),scales:{x:{title:{display:true,text:'CPU %',color:'#8B8FA8'},ticks:{color:'#6B7080'},grid:{color:'#2D3148'}},y:{title:{display:true,text:'RAM %',color:'#8B8FA8'},min:0,max:100,ticks:{color:'#6B7080'},grid:{color:'#2D3148'}}}}});
+new Chart(document.getElementById('scatter1'),{type:'scatter',data:{datasets:[{label:'CPU vs Net In',data:[$scatterCpuNet],backgroundColor:'rgba(108,99,255,0.6)',pointRadius:3}]},options:{...opt(),scales:{x:{title:{display:true,text:'CPU %',color:LGD},ticks:{color:TIK},grid:{color:GRD}},y:{title:{display:true,text:'Net In KB/s',color:LGD},ticks:{color:TIK},grid:{color:GRD}}}}});
+new Chart(document.getElementById('scatter2'),{type:'scatter',data:{datasets:[{label:'CPU vs RAM',data:[$scatterCpuRam],backgroundColor:'rgba(6,182,212,0.6)',pointRadius:3}]},options:{...opt(),scales:{x:{title:{display:true,text:'CPU %',color:LGD},ticks:{color:TIK},grid:{color:GRD}},y:{title:{display:true,text:'RAM %',color:LGD},min:0,max:100,ticks:{color:TIK},grid:{color:GRD}}}}});
 const HML=[$hmLabels],HMC=[$hmCpu],HMR=[$hmRam],HMD=[$hmDisk];
-new Chart(document.getElementById('heatmap'),{type:'bar',data:{labels:HML,datasets:[{label:'CPU',data:HMC,backgroundColor:HMC.map(v=>'rgba(108,99,255,'+Math.min(1,(v/100)*1.2)+')'),borderWidth:0},{label:'RAM',data:HMR,backgroundColor:HMR.map(v=>'rgba(6,182,212,'+Math.min(1,(v/100)*1.2)+')'),borderWidth:0},{label:'Disk',data:HMD,backgroundColor:HMD.map(v=>'rgba(16,185,129,'+Math.min(1,(v/100)*1.2)+')'),borderWidth:0}]},options:{responsive:true,animation:false,plugins:{legend:{labels:{color:'#8B8FA8',font:{size:11}}}},scales:{x:{stacked:false,ticks:{color:'#6B7080',maxTicksLimit:12,font:{size:9}},grid:{color:'#2D3148'}},y:{display:false}}}});
+new Chart(document.getElementById('heatmap'),{type:'bar',data:{labels:HML,datasets:[{label:'CPU',data:HMC,backgroundColor:HMC.map(v=>'rgba(108,99,255,'+Math.min(1,(v/100)*1.2)+')'),borderWidth:0},{label:'RAM',data:HMR,backgroundColor:HMR.map(v=>'rgba(6,182,212,'+Math.min(1,(v/100)*1.2)+')'),borderWidth:0},{label:'Disk',data:HMD,backgroundColor:HMD.map(v=>'rgba(16,185,129,'+Math.min(1,(v/100)*1.2)+')'),borderWidth:0}]},options:{responsive:true,animation:false,plugins:{legend:{labels:{color:LGD,font:{size:11}}}},scales:{x:{stacked:false,ticks:{color:TIK,maxTicksLimit:12,font:{size:9}},grid:{color:GRD}},y:{display:false}}}});
 </script>
 </body>
 </html>
@@ -1395,7 +1912,7 @@ function Connect-RemoteHost {
 
     # Build credential if username provided
     $user = $C['txtRemoteUser'].Text.Trim()
-    $pass = $C['pwdRemote'].Password
+    $pass = if ($null -ne $C['pwdRemote']) { $C['pwdRemote'].Password } else { '' }
     $cred = $null
     if (-not [string]::IsNullOrEmpty($user)) {
         $secPass = ConvertTo-SecureString $pass -AsPlainText -Force
@@ -1740,8 +2257,26 @@ $C['cmbRemoteHost'].Add_KeyDown({
     if ($e.Key -eq 'Return') { Connect-RemoteHost }
 })
 
+# Save column widths 1s after user stops resizing
+# DataGridTextColumn doesn't expose Add_PropertyChanged in PS5.1
+# Use the grid's own SizeChanged + a mouse-up event instead
+$script:ColSaveTimer = [System.Windows.Threading.DispatcherTimer]::new()
+$script:ColSaveTimer.Interval = [TimeSpan]::FromSeconds(1)
+$script:ColSaveTimer.Add_Tick({ $script:ColSaveTimer.Stop(); Save-Config })
+
+# Trigger save when user releases the mouse after a column resize
+$C['gridProcs'].Add_PreviewMouseLeftButtonUp({
+    $script:ColSaveTimer.Stop()
+    $script:ColSaveTimer.Start()
+})
+
 # Process filter
-$C['txtProcFilter'].Add_TextChanged({
+# Debounce filter: restart a 300ms timer on each keystroke
+# so the grid only re-filters after the user pauses typing
+$script:FilterTimer = [System.Windows.Threading.DispatcherTimer]::new()
+$script:FilterTimer.Interval = [TimeSpan]::FromMilliseconds(300)
+$script:FilterTimer.Add_Tick({
+    $script:FilterTimer.Stop()
     $filterText = $C['txtProcFilter'].Text.Trim()
     $hasFilter  = ($filterText -ne '' -and $filterText -ne $C['txtProcFilter'].Tag)
     if ($null -ne $script:AllProcesses) {
@@ -1752,9 +2287,111 @@ $C['txtProcFilter'].Add_TextChanged({
         } else { $script:AllProcesses }
     }
 })
+$C['txtProcFilter'].Add_TextChanged({
+    $script:FilterTimer.Stop()   # reset the debounce window
+    $script:FilterTimer.Start()
+})
 $C['btnProcFilterClear'].Add_Click({
     $C['txtProcFilter'].Text = $C['txtProcFilter'].Tag
     $C['txtProcFilter'].Foreground = $conv.ConvertFromString('#4B5563')
+})
+
+# ── Theme toggle ─────────────────────────────────────────────────────────────
+$C['btnTheme'].Add_Click({
+    $script:Theme = if ($script:Theme -eq 'Dark') { 'Light' } else { 'Dark' }
+    Set-UITheme
+    Save-Config
+})
+
+# ── NIC selector population (run once at startup) ─────────────────────────────
+$C['cmbNic'].Items.Add('All Adapters') | Out-Null
+try {
+    Get-NetAdapter -ErrorAction Stop |
+        Where-Object { $_.Status -eq 'Up' -and $_.InterfaceDescription -notlike '*Loopback*' } |
+        ForEach-Object { $C['cmbNic'].Items.Add($_.Name) | Out-Null }
+} catch {}
+$C['cmbNic'].SelectedIndex = 0
+$C['cmbNic'].Add_SelectionChanged({
+    $script:SelectedNic = if ($C['cmbNic'].SelectedIndex -le 0) { '' } else { $C['cmbNic'].SelectedValue }
+    $script:PrevNetIn  = 0L
+    $script:PrevNetOut = 0L   # reset delta on adapter change
+    Save-Config
+})
+
+# ── Process grouping toggle (right-click column header to toggle) ─────────────
+$script:GroupProcesses = $false
+$C['gridProcs'].Add_MouseRightButtonUp({
+    # Only toggle when clicking the header area, not rows
+    $hit = $C['gridProcs'].InputHitTest([System.Windows.Input.Mouse]::GetPosition($C['gridProcs']))
+    $el  = $hit
+    while ($null -ne $el -and $el -isnot [System.Windows.Controls.DataGridColumnHeader]) {
+        $el = [System.Windows.Media.VisualTreeHelper]::GetParent($el)
+    }
+    if ($null -ne $el) {
+        $script:GroupProcesses = -not $script:GroupProcesses
+        $C['txtStatus'].Text = if ($script:GroupProcesses) {
+            'Process grouping ON - instances of same exe are combined'
+        } else { 'Process grouping OFF - showing individual processes' }
+    }
+})
+
+# ── Load saved config and apply ───────────────────────────────────────────────
+$savedCfg = Import-Config
+if ($null -ne $savedCfg) {
+    if ($savedCfg.CpuThreshold)   { $script:CpuThreshold   = [int]$savedCfg.CpuThreshold   }
+    if ($savedCfg.RamThreshold)   { $script:RamThreshold   = [int]$savedCfg.RamThreshold   }
+    if ($savedCfg.DiskThreshold)  { $script:DiskThreshold  = [int]$savedCfg.DiskThreshold  }
+    if ($savedCfg.AutoExportMins) { $script:AutoExportMins = [int]$savedCfg.AutoExportMins }
+    if ($savedCfg.Theme)          { $script:Theme          = $savedCfg.Theme               }
+    if ($savedCfg.NicName)        {
+        $script:SelectedNic = $savedCfg.NicName
+        $nicIdx = $C['cmbNic'].Items.IndexOf($savedCfg.NicName)
+        if ($nicIdx -ge 0) { $C['cmbNic'].SelectedIndex = $nicIdx }
+    }
+    if ($null -ne $savedCfg.WindowLeft -and $null -ne $savedCfg.WindowTop) {
+        $Window.WindowStartupLocation = 'Manual'
+        $Window.Left   = [double]$savedCfg.WindowLeft
+        $Window.Top    = [double]$savedCfg.WindowTop
+        $Window.Width  = [double]$savedCfg.WindowWidth
+        $Window.Height = [double]$savedCfg.WindowHeight
+    }
+    if ($savedCfg.WindowState -eq 'Maximized') { $Window.WindowState = 'Maximized' }
+    # Restore column widths
+    if ($savedCfg.ColWidths) {
+        foreach ($col in $C['gridProcs'].Columns) {
+            $hdr = $col.Header.ToString()
+            if ($savedCfg.ColWidths.PSObject.Properties.Name -contains $hdr) {
+                $w = [double]$savedCfg.ColWidths.$hdr
+                if ($w -gt 10) { $col.Width = [System.Windows.Controls.DataGridLength]::new($w) }
+            }
+        }
+    }
+}
+
+# ── Save config on close (position + settings) ────────────────────────────────
+
+# Cores toggle button
+$C['btnCores'].Add_Click({
+    $script:ShowCores = -not $script:ShowCores
+    if ($script:ShowCores) {
+        $C['borderCores'].Visibility = 'Visible'
+        $C['btnCores'].Content       = 'Cores ON'
+        $C['txtStatus'].Text         = "Per-core CPU view enabled ($([Environment]::ProcessorCount) cores)"
+        # Re-prime all counters; actual values appear on next Update-UI tick
+        $script:CoreCounters | ForEach-Object { try { $null = $_.NextValue() } catch {} }
+        # Force immediate draw after a short delay so bars appear without waiting for timer
+        $primeTimer = [System.Windows.Threading.DispatcherTimer]::new()
+        $primeTimer.Interval = [TimeSpan]::FromMilliseconds(500)
+        $primeTimer.Add_Tick({
+            $primeTimer.Stop()
+            try { Update-UI (Get-Metrics) } catch {}
+        }.GetNewClosure())
+        $primeTimer.Start()
+    } else {
+        $C['borderCores'].Visibility = 'Collapsed'
+        $C['btnCores'].Content       = 'Cores'
+        $C['txtStatus'].Text         = 'Per-core CPU view hidden'
+    }
 })
 
 $C['btnExportCsv'].Add_Click({  Export-ToCsv })
@@ -1766,12 +2403,38 @@ $C['btnEndTask'].Add_Click({    Invoke-EndTask })
 $C['btnClearAlerts'].Add_Click({ $script:AlertLog.Clear(); $C['lstAlerts'].Items.Clear() })
 
 $Window.Add_Loaded({
+    # Tag all Border elements so Set-UITheme can repaint them without
+    # relying on current background colour (which changes each toggle)
+    $script:CardBorders = [System.Collections.Generic.List[System.Windows.Controls.Border]]::new()
+    $stk = [System.Collections.Generic.Stack[System.Windows.DependencyObject]]::new()
+    $stk.Push($Window)
+    while ($stk.Count -gt 0) {
+        $el = $stk.Pop()
+        if ($el -is [System.Windows.Controls.Border]) {
+            $hex = if ($el.Background) { $el.Background.ToString() } else { '' }
+            $hexUpper = $hex.ToUpper()
+            $el.Tag = if     ($hexUpper -match '1A1D27') { 'card'  } `
+                      elseif ($hexUpper -match '12151F') { 'sub'   } `
+                      elseif ($hexUpper -match '0F1117') { 'winbg' } `
+                      elseif ($el.Tag -in @('card','sub','winbg')) { $el.Tag } `
+                      else   { $null }
+            if ($el.Tag -in @('card','sub','winbg')) {
+                $script:CardBorders.Add($el) | Out-Null
+            }
+        }
+        for ($i = 0; $i -lt [System.Windows.Media.VisualTreeHelper]::GetChildrenCount($el); $i++) {
+            $stk.Push([System.Windows.Media.VisualTreeHelper]::GetChild($el, $i))
+        }
+    }
+    Set-UITheme   # apply saved/default theme after tagging
     $Timer.Start()
     try { Update-UI (Get-Metrics) } catch {}
 })
 $Window.Add_Closed({
+    Save-Config
     $Timer.Stop()
     $script:CpuCounter.Dispose()
+    $script:CoreCounters | ForEach-Object { try { $_.Dispose() } catch {} }
 })
 
 $app = [System.Windows.Application]::new()
