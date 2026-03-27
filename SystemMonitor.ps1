@@ -719,7 +719,7 @@ $toolGroups = @(
     @{
         Category = 'HARDWARE';     Colour = '#10B981'; Row = 0; Col = 3
         Tools = @(
-            @{ Label='Dev. Manager';     Tip='Manage hardware devices & drivers (devmgmt.msc)';   Cmd={ Start-Process 'devmgmt.msc'                   } },
+            @{ Label='Dev. Mgr.';     Tip='Manage hardware devices & drivers (devmgmt.msc)';   Cmd={ Start-Process 'devmgmt.msc'                   } },
             @{ Label='Disk Management';  Tip='Partition & format drives (diskmgmt.msc)';          Cmd={ Start-Process 'diskmgmt.msc'                  } },
             @{ Label='System Props';     Tip='Advanced system properties (systempropertiesadvanced)'; Cmd={ Start-Process 'systempropertiesadvanced'  } }
         )
@@ -967,6 +967,41 @@ function New-DriveCard {
     $tot.TextAlignment = 'Center'
     $sp.Children.Add($tot) | Out-Null
 
+    # ToolTip: drive letter | friendly name | media type | health
+    $ttLines = @("Drive: $($Drive.Drive)")
+    if ($Drive.FriendlyName) { $ttLines += "Disk:  $($Drive.FriendlyName)" }
+    if ($Drive.MediaType)    { $ttLines += "Type:  $($Drive.MediaType)"    }
+    if ($Drive.HealthStatus) {
+        $hCol = if ($Drive.HealthStatus -eq 'Healthy') {'#10B981'} else {'#EF4444'}
+        $ttLines += "Health: $($Drive.HealthStatus)"
+    }
+    if ($Drive.DiskNumber)   { $ttLines += "Disk #: $($Drive.DiskNumber)" }
+    $ttLines += "Used:  $($Drive.UsedPct) of $($Drive.Total)"
+    $ttLines += "Free:  $($Drive.Free)"
+
+    # Build ToolTip as a StackPanel so we can colour the health line
+    $tt = [System.Windows.Controls.ToolTip]::new()
+    $ttSp = [System.Windows.Controls.StackPanel]::new()
+    $ttSp.Margin = [System.Windows.Thickness]::new(4)
+    foreach ($line in $ttLines) {
+        $ttTb = [System.Windows.Controls.TextBlock]::new()
+        $ttTb.Text = $line
+        $ttTb.FontFamily = [System.Windows.Media.FontFamily]::new('Segoe UI')
+        $ttTb.FontSize = 11
+        if ($line -like 'Health:*' -and $Drive.HealthStatus) {
+            $ttTb.Foreground = $conv.ConvertFromString($hCol)
+            $ttTb.FontWeight = 'SemiBold'
+        } else {
+            $ttTb.Foreground = $conv.ConvertFromString('#CBD5E1')
+        }
+        $ttSp.Children.Add($ttTb) | Out-Null
+    }
+    $tt.Content = $ttSp
+    $tt.Background = $conv.ConvertFromString('#1A1D27')
+    $tt.BorderBrush = $conv.ConvertFromString('#3D4268')
+    $tt.Padding = [System.Windows.Thickness]::new(8,6,8,6)
+    $card.ToolTip = $tt
+
     $card.Child = $sp
     return $card
 }
@@ -1213,18 +1248,54 @@ function Get-Metrics {
 
     # Disks: use Win32_LogicalDisk for both local and remote (consistent)
     $ldisks = Get-CimInstance Win32_LogicalDisk @cimP -Filter "DriveType=3" -ErrorAction SilentlyContinue
+
+    # Physical disk info for tooltips (local only — Get-PhysicalDisk not CIM-remote-safe)
+    $physMap = @{}   # DeviceID (e.g. "0") → physical disk object
+    if (-not $isRemote) {
+        try {
+            Get-PhysicalDisk -ErrorAction Stop | ForEach-Object {
+                $physMap[$_.DeviceID] = $_
+            }
+        } catch {}
+    }
+
+    # Map logical drive letter → physical disk via partition chain
+    $driveToPhys = @{}   # e.g. "C:" → physical disk object
+    try {
+        $partitions = Get-CimInstance Win32_DiskDriveToDiskPartition -EA SilentlyContinue
+        $logicals   = Get-CimInstance Win32_LogicalDiskToPartition   -EA SilentlyContinue
+        foreach ($l2p in $logicals) {
+            $driveLetter = $l2p.Dependent.DeviceID
+            $partPath    = $l2p.Antecedent.DeviceID
+            $diskPath    = ($partitions | Where-Object {
+                $_.Dependent.DeviceID -eq $partPath }) | Select-Object -First 1
+            if ($diskPath) {
+                # Extract disk number from "\.\PHYSICALDRIVE0" → "0"
+                $diskNum = ($diskPath.Antecedent.DeviceID -replace '.*PHYSICALDRIVE','').Trim()
+                if ($physMap.ContainsKey($diskNum)) {
+                    $driveToPhys[$driveLetter] = $physMap[$diskNum]
+                }
+            }
+        }
+    } catch {}
+
     $disks  = $ldisks | ForEach-Object {
         $tot  = $_.Size
         $free = $_.FreeSpace
         $used = $tot - $free
         $pct  = if ($tot -gt 0) { [Math]::Round(($used/$tot)*100,1) } else { 0 }
+        $phys = $driveToPhys[$_.DeviceID]
         [PSCustomObject]@{
-            Drive   = $_.DeviceID
-            Label   = if ($_.VolumeName) { $_.VolumeName } else { $_.DeviceID }
-            Total   = Format-Bytes $tot
-            Free    = Format-Bytes $free
-            UsedPct = "$pct%"
-            _Pct=$pct; _Free=$free; _Total=$tot
+            Drive        = $_.DeviceID
+            Label        = if ($_.VolumeName) { $_.VolumeName } else { $_.DeviceID }
+            Total        = Format-Bytes $tot
+            Free         = Format-Bytes $free
+            UsedPct      = "$pct%"
+            _Pct         = $pct; _Free=$free; _Total=$tot
+            FriendlyName = if ($phys) { $phys.FriendlyName } else { '' }
+            MediaType    = if ($phys) { $phys.MediaType    } else { '' }
+            HealthStatus = if ($phys) { $phys.HealthStatus } else { '' }
+            DiskNumber   = if ($phys) { $phys.DeviceID     } else { '' }
         }
     }
     $primary = $disks | Where-Object { $_.Drive -eq 'C:' } | Select-Object -First 1
@@ -2073,13 +2144,24 @@ function Invoke-EndTask {
 
 # ── About dialog ──────────────────────────────────────────────────────────────
 function Show-AboutDialog {
+    # Pull current theme palette so the dialog matches the app
+    $at = $script:Themes[$script:Theme]
+    $aBg    = $conv.ConvertFromString($at.WinBg)
+    $aCard  = $conv.ConvertFromString($at.CardBg)
+    $aBord  = $conv.ConvertFromString($at.CardBorder)
+    $aFg1   = $conv.ConvertFromString($at.FgPrimary)
+    $aFg2   = $conv.ConvertFromString($at.FgSecond)
+    $aFg3   = $conv.ConvertFromString($at.FgMuted)
+    $aFgDim = $conv.ConvertFromString($at.FgDim)
+    $aAcct  = $conv.ConvertFromString($at.Accent)
+
     $ad = [System.Windows.Window]::new()
     $ad.Title = "About $($script:AppName)"
     $ad.Width = 460; $ad.Height = 370
     $ad.WindowStartupLocation = 'CenterOwner'
     $ad.Owner      = $Window
     $ad.ResizeMode = 'NoResize'
-    $ad.Background = $conv.ConvertFromString('#0F1117')
+    $ad.Background = $aBg
 
     $sp = [System.Windows.Controls.StackPanel]::new()
     $sp.Margin = [System.Windows.Thickness]::new(28,24,28,24)
@@ -2090,53 +2172,47 @@ function Show-AboutDialog {
     $titleRow.HorizontalAlignment = 'Center'
     $titleRow.Margin = [System.Windows.Thickness]::new(0,0,0,4)
 
-    # Monitor icon (Segoe UI Symbol U+E7F4)
     $iconApp = [System.Windows.Controls.TextBlock]::new()
-    $iconApp.Text       = [char]0xE7F4   # Screen / monitor glyph
-    $iconApp.FontFamily = [System.Windows.Media.FontFamily]::new('Segoe MDL2 Assets')
-    $iconApp.FontSize   = 22
-    $iconApp.Foreground = $conv.ConvertFromString('#6C63FF')
+    $iconApp.Text            = [char]0xE7F4
+    $iconApp.FontFamily      = [System.Windows.Media.FontFamily]::new('Segoe MDL2 Assets')
+    $iconApp.FontSize        = 22
+    $iconApp.Foreground      = $aAcct
     $iconApp.VerticalAlignment = 'Center'
-    $iconApp.Margin = [System.Windows.Thickness]::new(0,0,10,0)
+    $iconApp.Margin          = [System.Windows.Thickness]::new(0,0,10,0)
     $titleRow.Children.Add($iconApp) | Out-Null
 
     $t1 = [System.Windows.Controls.TextBlock]::new()
-    $t1.Text       = $script:AppName.ToUpper()
-    $t1.Foreground = $conv.ConvertFromString('#E2E8F0')
-    $t1.FontSize   = 20; $t1.FontWeight = 'Bold'
-    $t1.FontFamily = [System.Windows.Media.FontFamily]::new('Segoe UI')
+    $t1.Text            = $script:AppName.ToUpper()
+    $t1.Foreground      = $aFg1
+    $t1.FontSize        = 20; $t1.FontWeight = 'Bold'
+    $t1.FontFamily      = [System.Windows.Media.FontFamily]::new('Segoe UI')
     $t1.VerticalAlignment = 'Center'
     $titleRow.Children.Add($t1) | Out-Null
     $sp.Children.Add($titleRow) | Out-Null
 
     # Version + description
     $t2 = [System.Windows.Controls.TextBlock]::new()
-    $t2.Text = "v$($script:Version)  |  A WPF performance dashboard for Windows"
-    $t2.Foreground = $conv.ConvertFromString('#8B8FA8')
-    $t2.FontSize = 11; $t2.FontFamily = [System.Windows.Media.FontFamily]::new('Segoe UI')
+    $t2.Text               = "v$($script:Version)  |  A WPF performance dashboard for Windows"
+    $t2.Foreground         = $aFg3
+    $t2.FontSize           = 11
+    $t2.FontFamily         = [System.Windows.Media.FontFamily]::new('Segoe UI')
     $t2.HorizontalAlignment = 'Center'
-    $t2.Margin = [System.Windows.Thickness]::new(0,0,0,18)
+    $t2.Margin             = [System.Windows.Thickness]::new(0,0,0,18)
     $sp.Children.Add($t2) | Out-Null
 
     # Divider
     $div = [System.Windows.Controls.Border]::new()
-    $div.Height = 1; $div.Background = $conv.ConvertFromString('#2D3148')
+    $div.Height = 1; $div.Background = $aBord
     $div.Margin = [System.Windows.Thickness]::new(0,0,0,18)
     $sp.Children.Add($div) | Out-Null
 
-    # ── Info rows: icon + label + value/link ───────────────────────────────────
-    # Icons use Segoe MDL2 Assets glyphs (built into Windows 10/11)
+    # ── Info rows ─────────────────────────────────────────────────────────────
     $links = @(
-        @{ Icon=[char]0xE77B; IconColor='#CBD5E1'; Label='Author';   Value='Christopher Munn';                     Url='' },
-        @{ Icon=[char]0xE8A5; IconColor='#6C63FF'; Label='GitHub';   Value='ChrisMunnPS/SystemMonitor';            Url='https://github.com/ChrisMunnPS/SystemMonitor' },
-        @{ Icon=[char]0xE909; IconColor='#10B981'; Label='Website';  Value='ChrisMunnPS.github.io';                Url='https://ChrisMunnPS.github.io' },
-        @{ Icon=[char]0xE8D4; IconColor='#0A66C2'; Label='LinkedIn'; Value='in/chrismunn';                         Url='https://www.linkedin.com/in/chrismunn' }
+        @{ Icon=[char]0xE77B; IconColor=$at.FgSecond; Label='Author';   Value='Christopher Munn';              Url='' },
+        @{ Icon=[char]0xE8A5; IconColor=$at.Accent;   Label='GitHub';   Value='ChrisMunnPS/SystemMonitor';     Url='https://github.com/ChrisMunnPS/SystemMonitor' },
+        @{ Icon=[char]0xE909; IconColor=$at.Good;      Label='Website';  Value='ChrisMunnPS.github.io';         Url='https://ChrisMunnPS.github.io' },
+        @{ Icon=[char]0xE8D4; IconColor='#0A66C2';    Label='LinkedIn'; Value='in/chrismunn';                  Url='https://www.linkedin.com/in/chrismunn' }
     )
-    # Icon codes:
-    #   E77B = Contact/Person
-    #   E8A5 = Code/GitHub-style
-    #   E909 = Globe/Web
-    #   E8D4 = LinkedinLogo-style (contact card)
 
     foreach ($row in $links) {
         $g = [System.Windows.Controls.Grid]::new()
@@ -2148,44 +2224,47 @@ function Show-AboutDialog {
 
         # Icon
         $ico = [System.Windows.Controls.TextBlock]::new()
-        $ico.Text       = $row.Icon
-        $ico.FontFamily = [System.Windows.Media.FontFamily]::new('Segoe MDL2 Assets')
-        $ico.FontSize   = 14
-        $ico.Foreground = $conv.ConvertFromString($row.IconColor)
+        $ico.Text            = $row.Icon
+        $ico.FontFamily      = [System.Windows.Media.FontFamily]::new('Segoe MDL2 Assets')
+        $ico.FontSize        = 14
+        $ico.Foreground      = if ($row.IconColor -is [string]) { $conv.ConvertFromString($row.IconColor) } else { $row.IconColor }
         $ico.VerticalAlignment = 'Center'
         [System.Windows.Controls.Grid]::SetColumn($ico, 0)
         $g.Children.Add($ico) | Out-Null
 
         # Label
         $lbl = [System.Windows.Controls.TextBlock]::new()
-        $lbl.Text = $row.Label
-        $lbl.Foreground = $conv.ConvertFromString('#8B8FA8')
-        $lbl.FontSize = 11; $lbl.FontWeight = 'SemiBold'
-        $lbl.FontFamily = [System.Windows.Media.FontFamily]::new('Segoe UI')
+        $lbl.Text            = $row.Label
+        $lbl.Foreground      = $aFg3
+        $lbl.FontSize        = 11; $lbl.FontWeight = 'SemiBold'
+        $lbl.FontFamily      = [System.Windows.Media.FontFamily]::new('Segoe UI')
         $lbl.VerticalAlignment = 'Center'
         [System.Windows.Controls.Grid]::SetColumn($lbl, 1)
         $g.Children.Add($lbl) | Out-Null
 
         # Value or hyperlink
         if ($row.Url) {
-            $link = [System.Windows.Documents.Hyperlink]::new()
+            $icoFg = if ($row.IconColor -is [string]) { $conv.ConvertFromString($row.IconColor) } else { $row.IconColor }
+            $link  = [System.Windows.Documents.Hyperlink]::new()
             $link.NavigateUri = [Uri]::new($row.Url)
-            $link.Foreground  = $conv.ConvertFromString($row.IconColor)
+            $link.Foreground  = $icoFg
             $link.Inlines.Add([System.Windows.Documents.Run]::new($row.Value)) | Out-Null
             $link.Add_RequestNavigate(({
                 param($s,$e); Start-Process $e.Uri.AbsoluteUri; $e.Handled=$true
             }).GetNewClosure())
             $tb = [System.Windows.Controls.TextBlock]::new()
-            $tb.FontSize = 11; $tb.FontFamily = [System.Windows.Media.FontFamily]::new('Segoe UI')
+            $tb.FontSize   = 11
+            $tb.FontFamily = [System.Windows.Media.FontFamily]::new('Segoe UI')
             $tb.VerticalAlignment = 'Center'
             $tb.Inlines.Add($link) | Out-Null
             [System.Windows.Controls.Grid]::SetColumn($tb, 2)
             $g.Children.Add($tb) | Out-Null
         } else {
             $val = [System.Windows.Controls.TextBlock]::new()
-            $val.Text = $row.Value
-            $val.Foreground = $conv.ConvertFromString('#E2E8F0')
-            $val.FontSize = 11; $val.FontFamily = [System.Windows.Media.FontFamily]::new('Segoe UI')
+            $val.Text      = $row.Value
+            $val.Foreground = $aFg1
+            $val.FontSize   = 11
+            $val.FontFamily = [System.Windows.Media.FontFamily]::new('Segoe UI')
             $val.VerticalAlignment = 'Center'
             [System.Windows.Controls.Grid]::SetColumn($val, 2)
             $g.Children.Add($val) | Out-Null
@@ -2195,7 +2274,7 @@ function Show-AboutDialog {
 
     # Divider
     $div2 = [System.Windows.Controls.Border]::new()
-    $div2.Height = 1; $div2.Background = $conv.ConvertFromString('#2D3148')
+    $div2.Height = 1; $div2.Background = $aBord
     $div2.Margin = [System.Windows.Thickness]::new(0,6,0,10)
     $sp.Children.Add($div2) | Out-Null
 
@@ -2205,19 +2284,20 @@ function Show-AboutDialog {
     $footerRow.HorizontalAlignment = 'Center'
 
     $icoMachine = [System.Windows.Controls.TextBlock]::new()
-    $icoMachine.Text       = [char]0xE7EF   # Desktop PC glyph
-    $icoMachine.FontFamily = [System.Windows.Media.FontFamily]::new('Segoe MDL2 Assets')
-    $icoMachine.FontSize   = 12
-    $icoMachine.Foreground = $conv.ConvertFromString('#4B5563')
+    $icoMachine.Text            = [char]0xE7EF
+    $icoMachine.FontFamily      = [System.Windows.Media.FontFamily]::new('Segoe MDL2 Assets')
+    $icoMachine.FontSize        = 12
+    $icoMachine.Foreground      = $aFgDim
     $icoMachine.VerticalAlignment = 'Center'
-    $icoMachine.Margin = [System.Windows.Thickness]::new(0,0,6,0)
+    $icoMachine.Margin          = [System.Windows.Thickness]::new(0,0,6,0)
     $footerRow.Children.Add($icoMachine) | Out-Null
 
     $tfooter = [System.Windows.Controls.TextBlock]::new()
     $arch = if ([Environment]::Is64BitProcess) { '64-bit' } else { '32-bit' }
-    $tfooter.Text = "$([Environment]::MachineName)  |  PowerShell $($PSVersionTable.PSVersion)  |  $arch"
-    $tfooter.Foreground = $conv.ConvertFromString('#4B5563')
-    $tfooter.FontSize = 10; $tfooter.FontFamily = [System.Windows.Media.FontFamily]::new('Segoe UI')
+    $tfooter.Text      = "$([Environment]::MachineName)  |  PowerShell $($PSVersionTable.PSVersion)  |  $arch"
+    $tfooter.Foreground = $aFgDim
+    $tfooter.FontSize   = 10
+    $tfooter.FontFamily = [System.Windows.Media.FontFamily]::new('Segoe UI')
     $tfooter.VerticalAlignment = 'Center'
     $footerRow.Children.Add($tfooter) | Out-Null
     $sp.Children.Add($footerRow) | Out-Null
