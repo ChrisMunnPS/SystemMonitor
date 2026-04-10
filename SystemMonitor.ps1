@@ -334,7 +334,7 @@ function Get-FriendlyOS {
                    ToolTip="Battery health (full charge capacity vs design capacity)"/>
         <TextBlock x:Name="txtBattCycles" Grid.Column="6" Foreground="#6B7080" FontSize="10"
                    FontFamily="Segoe UI" VerticalAlignment="Center" Margin="12,0,0,0"
-                   ToolTip="Charge cycle count (from BatteryCycleCount WMI — may not be available on all hardware)"/>
+                   ToolTip="Charge cycle count (from BatteryCycleCount WMI  -  may not be available on all hardware)"/>
       </Grid>
     </Border>
 
@@ -503,14 +503,14 @@ $script:Themes = @{
         HeaderBg     = '#0F1117'; HeaderFg    = '#8B8FA8'
     }
     Light = @{
-        # High-contrast light theme — all text against white/near-white backgrounds
+        # High-contrast light theme  -  all text against white/near-white backgrounds
         WinBg        = '#F0F4F8'; CardBg      = '#FFFFFF'; CardBorder  = '#D1D9E6'
         SubBg        = '#E8EEF5'; AltRow      = '#F0F4F8'; InputBg     = '#E8EEF5'
         FgPrimary    = '#0F172A'; FgSecond    = '#1E293B'; FgMuted     = '#475569'
         FgDim        = '#94A3B8'; FgDimmer    = '#CBD5E1'; Accent      = '#4F46E5'
         Good         = '#059669'; Warn        = '#B45309'; Danger      = '#B91C1C'
         BtnBg        = '#E2E8F0'; BtnBorder   = '#94A3B8'; BtnFg       = '#1E293B'
-        # Process grid rows — dark text on tinted backgrounds for readability
+        # Process grid rows  -  dark text on tinted backgrounds for readability
         ProcNormal   = '#1E293B'; ProcHot     = '#7C2D12'; ProcWarm    = '#78350F'
         ProcHotBg    = '#FEE2E2'; ProcWarmBg  = '#FEF3C7'; ProcNRBg    = '#FCE7F3'
         HeaderBg     = '#E2E8F0'; HeaderFg    = '#334155'
@@ -542,7 +542,7 @@ function Set-UITheme {
     # Window background
     $Window.Background = $bg
 
-    # Repaint tagged Border cards (tagged once at Window.Loaded — reliable across toggles)
+    # Repaint tagged Border cards (tagged once at Window.Loaded  -  reliable across toggles)
     foreach ($b in $script:CardBorders) {
         switch ($b.Tag) {
             'card'  { $b.Background = $cbg; $b.BorderBrush = $cbo }
@@ -578,7 +578,7 @@ function Set-UITheme {
     }
     $C['txtUptime'].Foreground = $conv.ConvertFromString($t.Accent)
 
-    # DataGrids — set base colours; row colours applied per-tick in Update-UI
+    # DataGrids  -  set base colours; row colours applied per-tick in Update-UI
     foreach ($grd in @($C['gridProcs'])) {   # gridDisks replaced by donut cards
         $grd.Background               = [System.Windows.Media.Brushes]::Transparent
         $grd.Foreground               = $fs
@@ -707,12 +707,48 @@ $toolGroups = @(
             @{ Label='Reliability';   Tip='Windows Reliability History (perfmon /rel)';        Cmd={ Start-Process 'perfmon' -ArgumentList '/rel' } },
             @{ Label='Event Viewer';  Tip='System & application event logs (eventvwr)';        Cmd={ Start-Process 'eventvwr'  } },
             @{ Label='System Info';   Tip='Full hardware & software inventory (msinfo32)';     Cmd={ Start-Process 'msinfo32'  } },
-            @{ Label='WiFi Report';   Tip='Generate & open Wi-Fi diagnostics report';          Cmd={
-                $C['txtStatus'].Text = 'Generating WiFi report...'
-                Start-Process 'netsh' -ArgumentList 'wlan show wlanreport' -WindowStyle Hidden -Wait
+            @{ Label='WiFi Report';   Tip='Runs: netsh wlan show wlanreport (requires elevation) - generates a fresh Wi-Fi diagnostics report and opens it in your browser';  Cmd={
                 $rpt = "$env:ProgramData\Microsoft\Windows\WlanReport\wlan-report-latest.html"
-                if (Test-Path $rpt) { Start-Process $rpt }
-                else { $C['txtStatus'].Text = '[!] WiFi report not found - adapter may not support this' }
+
+                # netsh wlan show wlanreport requires Administrator to write a fresh report.
+                # Check current elevation - if not admin, prompt via RunAs.
+                $isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole(
+                               [Security.Principal.WindowsBuiltInRole]::Administrator)
+
+                # Delete old file so we can reliably detect a fresh one afterward
+                try { Remove-Item $rpt -Force -EA SilentlyContinue } catch {}
+                $C['txtStatus'].Text = '[WiFi] Requesting elevation and generating report...'
+
+                # Launch netsh elevated (UAC prompt will appear if not already admin)
+                $proc = Start-Process 'netsh' `
+                            -ArgumentList 'wlan','show','wlanreport' `
+                            -Verb RunAs `
+                            -WindowStyle Hidden -PassThru -ErrorAction Stop
+
+                $wifiAttempt = 0
+                $wifiTimer   = [System.Windows.Threading.DispatcherTimer]::new()
+                $wifiTimer.Interval = [TimeSpan]::FromMilliseconds(500)
+                $wifiTimer.Add_Tick(({
+                    $wifiAttempt++
+                    $dots = '.' * (($wifiAttempt % 3) + 1)
+                    if ($proc.HasExited) {
+                        $wifiTimer.Stop()
+                        if (Test-Path $rpt) {
+                            $age = ((Get-Item $rpt).LastWriteTime).ToString('HH:mm:ss')
+                            $C['txtStatus'].Text = "[WiFi] Report ready ($age) - opening in browser"
+                            Start-Process $rpt
+                        } else {
+                            $C['txtStatus'].Text = '[!] WiFi report not created - check that Wi-Fi is enabled and adapter is supported'
+                        }
+                    } elseif ($wifiAttempt -ge 60) {
+                        $wifiTimer.Stop()
+                        try { $proc.Kill() } catch {}
+                        $C['txtStatus'].Text = '[!] WiFi report timed out after 30s'
+                    } else {
+                        $C['txtStatus'].Text = "[WiFi] Generating report$dots"
+                    }
+                }).GetNewClosure())
+                $wifiTimer.Start()
             }}
         )
     },
@@ -760,7 +796,7 @@ function New-ToolButton {
 foreach ($group in $toolGroups) {
     $grpColour = if ($group.Colour) { $group.Colour } else { '#4B5563' }
 
-    # Outer cell container — add right padding to visually separate columns
+    # Outer cell container  -  add right padding to visually separate columns
     $cell = [System.Windows.Controls.Border]::new()
     $cell.Padding = [System.Windows.Thickness]::new(0,2,14,4)
     [System.Windows.Controls.Grid]::SetRow($cell,    $group.Row)
@@ -769,7 +805,7 @@ foreach ($group in $toolGroups) {
     $grpPanel = [System.Windows.Controls.StackPanel]::new()
     $grpPanel.Orientation = 'Vertical'
 
-    # Category label — coloured per group
+    # Category label  -  coloured per group
     $lbl = [System.Windows.Controls.TextBlock]::new()
     $lbl.Text       = $group.Category
     $lbl.Foreground = $conv.ConvertFromString($grpColour)
@@ -1048,7 +1084,7 @@ function Import-Config {
 function New-CoreBar {
     param([int]$CoreIndex, [double]$Pct, [string]$Colour)
     $barH  = 56   # total bar height in pixels
-    $barW  = 42   # bar column width — wide enough for "100%"
+    $barW  = 42   # bar column width  -  wide enough for "100%"
 
     $sp = [System.Windows.Controls.StackPanel]::new()
     $sp.Orientation = 'Vertical'
@@ -1249,7 +1285,7 @@ function Get-Metrics {
     # Disks: use Win32_LogicalDisk for both local and remote (consistent)
     $ldisks = Get-CimInstance Win32_LogicalDisk @cimP -Filter "DriveType=3" -ErrorAction SilentlyContinue
 
-    # Physical disk info for tooltips (local only — Get-PhysicalDisk not CIM-remote-safe)
+    # Physical disk info for tooltips (local only  -  Get-PhysicalDisk not CIM-remote-safe)
     $physMap = @{}   # DeviceID (e.g. "0") → physical disk object
     if (-not $isRemote) {
         try {
@@ -1386,7 +1422,7 @@ function Update-UI {
     # Detail on hover via ToolTip
     $C['cardCpu'].ToolTip    = "CPU: $($m.CPU)%  |  Cores: $([Environment]::ProcessorCount)"
 
-    # Per-core bars — only sample and draw when panel is visible
+    # Per-core bars  -  only sample and draw when panel is visible
     if ($script:ShowCores -and $C['borderCores'].Visibility -eq 'Visible') {
         $C['wrapCores'].Children.Clear()
         $thCores = $script:Themes[$script:Theme]
@@ -1420,7 +1456,7 @@ function Update-UI {
     Update-Sparkline $script:SparklineDisk $m.DiskPct
     Update-Sparkline $script:SparklineNet  ([Math]::Min(100.0, ($m.NetInKb + $m.NetOutKb) / 10))
 
-    # Draw sparklines — deferred until canvas is laid out (ActualWidth > 0)
+    # Draw sparklines  -  deferred until canvas is laid out (ActualWidth > 0)
     if ($C['sparkCpu'].ActualWidth -gt 0) {
         $thSp = $script:Themes[$script:Theme]
         Write-Sparkline $C['sparkCpu']  $script:SparklineCpu  $thSp.Accent
@@ -1749,7 +1785,7 @@ function Export-ToHtmlFile {
     param([string]$Path)
     $data = $script:History | Select-Object -Last 300
 
-    # Theme-aware colours — use current app theme for the report
+    # Theme-aware colours  -  use current app theme for the report
     $th       = $script:Themes[$script:Theme]
     $htmlBg   = $th.WinBg
     $htmlCard = $th.CardBg
