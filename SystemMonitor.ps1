@@ -524,6 +524,87 @@ function Get-Brush { param([string]$Key)
     return $conv.ConvertFromString((Get-ThemeColour $Key))
 }
 
+# ── Profile size scanner ─────────────────────────────────────────────────────
+$script:_ProfQueue     = $null
+$script:_ProfResults   = $null
+$script:_ProfScanTimer = $null
+
+function Add-ProfilePanel {
+    # Rebuilds the profile card in wrapDrives immediately with current results
+    # Remove any existing profile panel (last child if it's not a drive card)
+    $children = $C['wrapDrives'].Children
+    if ($children.Count -gt 0) {
+        $last = $children[$children.Count - 1]
+        # Drive cards have a Canvas child (the donut); profile panel has a StackPanel
+        if ($last.Child -is [System.Windows.Controls.StackPanel]) {
+            $children.RemoveAt($children.Count - 1)
+        }
+    }
+    if ($null -ne $script:CachedProfiles -and $script:CachedProfiles.Count -gt 0) {
+        $panel = New-ProfileSection -Profiles $script:CachedProfiles
+        if ($null -ne $panel) { $C['wrapDrives'].Children.Add($panel) | Out-Null }
+    }
+}
+
+function Start-ProfileScan {
+    if ($script:ProfileScanRunning) { return }
+    if ($null -ne $script:_ProfScanTimer -and $script:_ProfScanTimer.IsEnabled) { return }
+
+    # Queue ALL profiles - current user first, others after
+    try {
+        $allProfs = @(Get-CimInstance Win32_UserProfile -ErrorAction Stop |
+                      Where-Object { $_.LocalPath -like 'C:\Users\*' -and -not $_.Special } |
+                      Sort-Object { if ($_.LocalPath -eq $env:USERPROFILE) { 0 } else { 1 } })
+    } catch { return }
+
+    if ($allProfs.Count -eq 0) {
+        $C['txtStatus'].Text = "Profile: $(Format-Bytes ($script:CachedProfiles[0].SizeBytes))"
+        return
+    }
+
+    $script:ProfileScanRunning = $true
+    $script:_ProfQueue   = [System.Collections.Queue]::new($allProfs)
+    $script:_ProfResults = [System.Collections.Generic.List[PSCustomObject]]::new()
+
+
+    if ($null -eq $script:_ProfScanTimer) {
+        $script:_ProfScanTimer          = [System.Windows.Threading.DispatcherTimer]::new()
+        $script:_ProfScanTimer.Interval = [TimeSpan]::FromMilliseconds(200)
+        $script:_ProfScanTimer.Add_Tick({
+            if ($null -eq $script:_ProfQueue -or $script:_ProfQueue.Count -eq 0) {
+                $script:_ProfScanTimer.Stop()
+                $script:CachedProfiles = @(
+                    $script:_ProfResults | Sort-Object SizeBytes -Descending
+                )
+                $script:ProfileScanRunning = $false
+                Add-ProfilePanel
+                $tot = ($script:CachedProfiles | Measure-Object SizeBytes -Sum).Sum
+                $C['txtStatus'].Text = "Profiles: $($script:CachedProfiles.Count) user(s), total $(Format-Bytes $tot)"
+                return
+            }
+            $prof  = $script:_ProfQueue.Dequeue()
+            $path  = $prof.LocalPath
+            $name  = Split-Path $path -Leaf
+            $rem   = $script:_ProfQueue.Count
+            $C['txtStatus'].Text = "Scanning: $name ($rem remaining)..."
+            $bytes = 0L
+            try {
+                $bytes = (Get-ChildItem $path -Recurse -Force -ErrorAction SilentlyContinue |
+                          Measure-Object Length -Sum).Sum
+                if ($null -eq $bytes) { $bytes = 0L }
+            } catch {}
+            if ($bytes -gt 0) {
+                $script:_ProfResults.Add([PSCustomObject]@{
+                    UserName    = $name
+                    SizeBytes   = [long]$bytes
+                    ProfilePath = $path
+                })
+            }
+        })
+    }
+    $script:_ProfScanTimer.Start()
+}
+
 function Set-UITheme {
     $t = $script:Themes[$script:Theme]
     $bg  = $conv.ConvertFromString($t.WinBg)
@@ -845,7 +926,153 @@ $C['gridProcs'].Add_PreviewMouseRightButtonDown({
 
 $ctx = [System.Windows.Controls.ContextMenu]::new()
 
-# Fix 2: capture $C and $conv into each handler via GetNewClosure()
+# ── User profile size card ────────────────────────────────────────────────────
+function New-DonutArc {
+    param([double]$StartAngle,[double]$SweepAngle,[double]$Cx,[double]$Cy,[double]$R,[string]$Colour)
+    if ($SweepAngle -ge 360) { $SweepAngle = 359.99 }
+    $s  = $StartAngle * [Math]::PI / 180
+    $e  = ($StartAngle + $SweepAngle) * [Math]::PI / 180
+    $sx = $Cx + $R * [Math]::Sin($s); $sy = $Cy - $R * [Math]::Cos($s)
+    $ex = $Cx + $R * [Math]::Sin($e); $ey = $Cy - $R * [Math]::Cos($e)
+    $geo = [System.Windows.Media.PathGeometry]::new()
+    $fig = [System.Windows.Media.PathFigure]::new()
+    $fig.StartPoint = [System.Windows.Point]::new($Cx,$Cy)
+    $fig.Segments.Add([System.Windows.Media.LineSegment]::new([System.Windows.Point]::new($sx,$sy),$true))
+    $arc = [System.Windows.Media.ArcSegment]::new()
+    $arc.Point = [System.Windows.Point]::new($ex,$ey)
+    $arc.Size  = [System.Windows.Size]::new($R,$R)
+    $arc.IsLargeArc = ($SweepAngle -gt 180); $arc.SweepDirection = 'Clockwise'
+    $fig.Segments.Add($arc); $fig.IsClosed = $true
+    $geo.Figures.Add($fig)
+    $path = [System.Windows.Shapes.Path]::new()
+    $path.Data = $geo; $path.Fill = $conv.ConvertFromString($Colour)
+    return $path
+}
+
+function New-ProfileSection {
+    param([object[]]$Profiles)
+    $palette = @('#10B981','#6C63FF','#F97316','#06B6D4','#F43F5E','#A855F7','#EAB308')
+    $total   = ($Profiles | Measure-Object SizeBytes -Sum).Sum
+    if ($total -le 0) { return $null }
+    $useDonut = $Profiles.Count -gt 2
+
+    $outer = [System.Windows.Controls.Border]::new()
+    $outer.Background      = $conv.ConvertFromString('#12151F')
+    $outer.CornerRadius    = [System.Windows.CornerRadius]::new(6)
+    $outer.Padding         = [System.Windows.Thickness]::new(10,8,10,8)
+    $outer.Margin          = [System.Windows.Thickness]::new(0,0,8,8)
+    $outer.BorderBrush     = $conv.ConvertFromString('#2D3148')
+    $outer.BorderThickness = [System.Windows.Thickness]::new(1)
+
+    $sp = [System.Windows.Controls.StackPanel]::new()
+
+    # Header
+    $hdr = [System.Windows.Controls.StackPanel]::new()
+    $hdr.Orientation = 'Horizontal'; $hdr.Margin = [System.Windows.Thickness]::new(0,0,0,6)
+    $hIco = [System.Windows.Controls.TextBlock]::new()
+    $hIco.Text = [char]0xE77B; $hIco.FontFamily = [System.Windows.Media.FontFamily]::new('Segoe MDL2 Assets')
+    $hIco.FontSize = 11; $hIco.Foreground = $conv.ConvertFromString('#10B981')
+    $hIco.VerticalAlignment = 'Center'; $hIco.Margin = [System.Windows.Thickness]::new(0,0,5,0)
+    $hdr.Children.Add($hIco) | Out-Null
+    $hTxt = [System.Windows.Controls.TextBlock]::new()
+    $hTxt.Text = 'USER PROFILES'; $hTxt.FontSize = 9; $hTxt.FontWeight = 'SemiBold'
+    $hTxt.Foreground = $conv.ConvertFromString('#8B8FA8')
+    $hTxt.FontFamily = [System.Windows.Media.FontFamily]::new('Segoe UI')
+    $hTxt.VerticalAlignment = 'Center'
+    $hdr.Children.Add($hTxt) | Out-Null
+    $sp.Children.Add($hdr) | Out-Null
+
+    if ($useDonut) {
+        $row = [System.Windows.Controls.StackPanel]::new()
+        $row.Orientation = 'Horizontal'
+        $sz = 80.0; $cx = $sz/2; $cy = $sz/2; $R = $sz/2-3; $inner = $sz*0.30
+        $cv2 = [System.Windows.Controls.Canvas]::new()
+        $cv2.Width = $sz; $cv2.Height = $sz
+        $bgE = [System.Windows.Shapes.Ellipse]::new()
+        $bgE.Width = $sz-4; $bgE.Height = $sz-4; $bgE.Fill = $conv.ConvertFromString('#2D3148')
+        [System.Windows.Controls.Canvas]::SetLeft($bgE,2); [System.Windows.Controls.Canvas]::SetTop($bgE,2)
+        $cv2.Children.Add($bgE) | Out-Null
+        $startA = 0.0
+        for ($i=0;$i -lt $Profiles.Count;$i++) {
+            $col = $palette[$i % $palette.Count]
+            $sw  = ($Profiles[$i].SizeBytes / $total) * 360
+            $cv2.Children.Add((New-DonutArc $startA $sw $cx $cy $R $col)) | Out-Null
+            $startA += $sw
+        }
+        $holeE = [System.Windows.Shapes.Ellipse]::new()
+        $holeE.Width=$inner*2; $holeE.Height=$inner*2; $holeE.Fill=$conv.ConvertFromString('#12151F')
+        [System.Windows.Controls.Canvas]::SetLeft($holeE,$cx-$inner); [System.Windows.Controls.Canvas]::SetTop($holeE,$cy-$inner)
+        $cv2.Children.Add($holeE) | Out-Null
+        $cL = [System.Windows.Controls.TextBlock]::new()
+        $cL.Text = Format-Bytes $total; $cL.FontSize = 8; $cL.FontWeight = 'Bold'
+        $cL.Foreground = $conv.ConvertFromString('#E2E8F0')
+        $cL.FontFamily = [System.Windows.Media.FontFamily]::new('Segoe UI')
+        $cL.TextAlignment = 'Center'; $cL.Width = $inner*2
+        [System.Windows.Controls.Canvas]::SetLeft($cL,$cx-$inner); [System.Windows.Controls.Canvas]::SetTop($cL,$cy-7)
+        $cv2.Children.Add($cL) | Out-Null
+        $row.Children.Add($cv2) | Out-Null
+        $leg = [System.Windows.Controls.StackPanel]::new()
+        $leg.Orientation = 'Vertical'; $leg.Margin = [System.Windows.Thickness]::new(8,0,0,0)
+        $leg.VerticalAlignment = 'Center'
+        for ($i=0;$i -lt $Profiles.Count;$i++) {
+            $col = $palette[$i % $palette.Count]
+            $pct = [Math]::Round($Profiles[$i].SizeBytes/$total*100,0)
+            $lR  = [System.Windows.Controls.StackPanel]::new()
+            $lR.Orientation = 'Horizontal'; $lR.Margin = [System.Windows.Thickness]::new(0,1,0,1)
+            $lR.Cursor = [System.Windows.Input.Cursors]::Hand
+            $pp = $Profiles[$i].ProfilePath
+            $lR.Add_MouseLeftButtonUp(({ try { Start-Process 'explorer.exe' -ArgumentList $pp } catch {} }).GetNewClosure())
+            $dot = [System.Windows.Shapes.Ellipse]::new()
+            $dot.Width=8;$dot.Height=8;$dot.Fill=$conv.ConvertFromString($col)
+            $dot.VerticalAlignment='Center';$dot.Margin=[System.Windows.Thickness]::new(0,0,4,0)
+            $lR.Children.Add($dot) | Out-Null
+            $un  = if ($Profiles[$i].UserName.Length -gt 12) { $Profiles[$i].UserName.Substring(0,11)+'.' } else { $Profiles[$i].UserName }
+            $lT  = [System.Windows.Controls.TextBlock]::new()
+            $lT.Text = "$un  $pct%"; $lT.FontSize = 9
+            $lT.Foreground = $conv.ConvertFromString('#CBD5E1')
+            $lT.FontFamily = [System.Windows.Media.FontFamily]::new('Segoe UI')
+            $lT.VerticalAlignment = 'Center'
+            $lT.ToolTip = "$($Profiles[$i].UserName)  $(Format-Bytes $Profiles[$i].SizeBytes)"
+            $lR.Children.Add($lT) | Out-Null
+            $leg.Children.Add($lR) | Out-Null
+        }
+        $row.Children.Add($leg) | Out-Null
+        $sp.Children.Add($row) | Out-Null
+    } else {
+        for ($i=0;$i -lt $Profiles.Count;$i++) {
+            $col = $palette[$i % $palette.Count]; $prof = $Profiles[$i]
+            $pct = [Math]::Round($prof.SizeBytes/$total*100,0)
+            $pR  = [System.Windows.Controls.StackPanel]::new()
+            $pR.Orientation='Horizontal'; $pR.Margin=[System.Windows.Thickness]::new(0,2,0,2)
+            $pR.Cursor=[System.Windows.Input.Cursors]::Hand
+            $pp2 = $prof.ProfilePath
+            $pR.Add_MouseLeftButtonUp(({ try { Start-Process 'explorer.exe' -ArgumentList $pp2 } catch {} }).GetNewClosure())
+            $icoT = [System.Windows.Controls.TextBlock]::new()
+            $icoT.Text=[char]0xE77B; $icoT.FontFamily=[System.Windows.Media.FontFamily]::new('Segoe MDL2 Assets')
+            $icoT.FontSize=14; $icoT.Foreground=$conv.ConvertFromString($col)
+            $icoT.VerticalAlignment='Center'; $icoT.Margin=[System.Windows.Thickness]::new(0,0,6,0)
+            $pR.Children.Add($icoT) | Out-Null
+            $inf = [System.Windows.Controls.StackPanel]::new(); $inf.Orientation='Vertical'
+            $nT  = [System.Windows.Controls.TextBlock]::new()
+            $nT.Text=$prof.UserName; $nT.FontSize=10; $nT.FontWeight='SemiBold'
+            $nT.Foreground=$conv.ConvertFromString('#CBD5E1')
+            $nT.FontFamily=[System.Windows.Media.FontFamily]::new('Segoe UI')
+            $inf.Children.Add($nT) | Out-Null
+            $sT = [System.Windows.Controls.TextBlock]::new()
+            $sT.Text="$(Format-Bytes $prof.SizeBytes)  ($pct%)"
+            $sT.FontSize=9; $sT.Foreground=$conv.ConvertFromString('#8B8FA8')
+            $sT.FontFamily=[System.Windows.Media.FontFamily]::new('Segoe UI')
+            $inf.Children.Add($sT) | Out-Null
+            $pR.Children.Add($inf) | Out-Null
+            $sp.Children.Add($pR) | Out-Null
+        }
+    }
+    $outer.Child = $sp
+    return $outer
+}
+
+
+# ── Fix 2: capture $C and $conv into each handler via GetNewClosure()
 $miEnd = [System.Windows.Controls.MenuItem]::new()
 $miEnd.Header     = 'End Task'
 $miEnd.Foreground = $conv.ConvertFromString('#EF4444')
@@ -1228,6 +1455,8 @@ $script:CachedBattFull    = $null
 $script:CachedBattAge    = 0
 $script:CachedGateway    = $null
 $script:LastDriveKey     = $null
+$script:CachedProfiles    = $null    # populated by incremental scan
+$script:ProfileScanRunning = $false
 $script:TickCount        = 0       # increment each refresh
 $script:AutoExportMins   = 0      # 0 = disabled
 $script:LastAutoExport   = [datetime]::Now
@@ -1283,7 +1512,8 @@ function Get-Metrics {
     $ramPct  = [Math]::Round(($ramUsed/$ramTot)*100, 1)
 
     # Disks: use Win32_LogicalDisk for both local and remote (consistent)
-    $ldisks = Get-CimInstance Win32_LogicalDisk @cimP -Filter "DriveType=3" -ErrorAction SilentlyContinue
+    # DriveType: 2=Removable, 3=Fixed, 4=Network, 5=CD-ROM
+    $ldisks = Get-CimInstance Win32_LogicalDisk @cimP -Filter "DriveType=2 OR DriveType=3 OR DriveType=4" -ErrorAction SilentlyContinue
 
     # Physical disk info for tooltips (local only  -  Get-PhysicalDisk not CIM-remote-safe)
     $physMap = @{}   # DeviceID (e.g. "0") → physical disk object
@@ -1472,6 +1702,11 @@ function Update-UI {
         $C['wrapDrives'].Children.Clear()
         foreach ($d in $m.Disks) {
             $C['wrapDrives'].Children.Add((New-DriveCard $d)) | Out-Null
+        }
+        # Add profile panel if scan has results
+        if ($null -ne $script:CachedProfiles -and $script:CachedProfiles.Count -gt 0) {
+            $profPanel = New-ProfileSection -Profiles $script:CachedProfiles
+            if ($null -ne $profPanel) { $C['wrapDrives'].Children.Add($profPanel) | Out-Null }
         }
     }
 
@@ -2161,9 +2396,69 @@ function Disconnect-RemoteHost {
 }
 
 # ── End task helper (shared by button and context menu) ────────────────────────
+# ── Confirmation dialog helper ────────────────────────────────────────────────
+function Show-Confirm {
+    param(
+        [string]$Title   = 'Confirm',
+        [string]$Message,
+        [string]$YesLabel = 'Yes',
+        [string]$NoLabel  = 'No',
+        [string]$YesColour = '#EF4444'   # red for destructive actions
+    )
+    $at  = $script:Themes[$script:Theme]
+    $dlg = [System.Windows.Window]::new()
+    $dlg.Title  = $Title
+    $dlg.Width  = 380; $dlg.Height = 160
+    $dlg.WindowStartupLocation = 'CenterOwner'
+    $dlg.Owner  = $Window
+    $dlg.ResizeMode  = 'NoResize'
+    $dlg.Background  = $conv.ConvertFromString($at.WinBg)
+
+    $root = [System.Windows.Controls.Grid]::new()
+    $r0   = [System.Windows.Controls.RowDefinition]::new(); $r0.Height = [System.Windows.GridLength]::new(1,'Star')
+    $r1   = [System.Windows.Controls.RowDefinition]::new(); $r1.Height = [System.Windows.GridLength]::new(0,'Auto')
+    $root.RowDefinitions.Add($r0); $root.RowDefinitions.Add($r1)
+
+    $msg = [System.Windows.Controls.TextBlock]::new()
+    $msg.Text = $Message; $msg.TextWrapping = 'Wrap'
+    $msg.Foreground = $conv.ConvertFromString($at.FgPrimary)
+    $msg.FontFamily = [System.Windows.Media.FontFamily]::new('Segoe UI')
+    $msg.FontSize = 12; $msg.Margin = [System.Windows.Thickness]::new(20,18,20,8)
+    $msg.VerticalAlignment = 'Center'
+    [System.Windows.Controls.Grid]::SetRow($msg,0); $root.Children.Add($msg) | Out-Null
+
+    $btnRow = [System.Windows.Controls.StackPanel]::new()
+    $btnRow.Orientation = 'Horizontal'; $btnRow.HorizontalAlignment = 'Right'
+    $btnRow.Margin = [System.Windows.Thickness]::new(0,0,16,14)
+    [System.Windows.Controls.Grid]::SetRow($btnRow,1)
+
+    $result = $false
+    $mkBtn  = {
+        param($lbl,$bg,$fg,$isYes)
+        $b = [System.Windows.Controls.Button]::new()
+        $b.Content = $lbl; $b.Width = 90; $b.Height = 30; $b.Margin = [System.Windows.Thickness]::new(8,0,0,0)
+        $b.Background = $conv.ConvertFromString($bg)
+        $b.Foreground = $conv.ConvertFromString($fg)
+        $b.FontFamily = [System.Windows.Media.FontFamily]::new('Segoe UI'); $b.FontSize = 11
+        $b.BorderThickness = [System.Windows.Thickness]::new(0)
+        $b.Add_Click({ $result = $isYes; $dlg.Close() }.GetNewClosure())
+        return $b
+    }
+    $btnRow.Children.Add((&$mkBtn $NoLabel  $at.BtnBg $at.BtnFg $false)) | Out-Null
+    $btnRow.Children.Add((&$mkBtn $YesLabel $YesColour '#FFFFFF' $true )) | Out-Null
+    $root.Children.Add($btnRow) | Out-Null
+    $dlg.Content = $root
+    [void]$dlg.ShowDialog()
+    return $result
+}
+
 function Invoke-EndTask {
     $row = $C['gridProcs'].SelectedItem
     if ($null -eq $row) { $C['txtStatus'].Text = '[!] Select a process first'; return }
+    $ok = Show-Confirm -Title 'End Task' `
+        -Message "End process $($row.Name) (PID $($row.PID))?`n`nUnsaved work in this process will be lost." `
+        -YesLabel 'End Task' -NoLabel 'Cancel'
+    if (-not $ok) { return }
     try {
         if ($script:CimSession) {
             # Remote: use CIM to terminate
@@ -2367,7 +2662,12 @@ $C['btnConnect'].Add_Click({    Connect-RemoteHost })
 
 # Quick-fix button: add remote host to TrustedHosts (shown in status bar tip)
 # User can run: Set-Item WSMan:\localhost\Client\TrustedHosts -Value 'hostname' -Force -Concatenate
-$C['btnDisconnect'].Add_Click({ Disconnect-RemoteHost })
+$C['btnDisconnect'].Add_Click({
+    $ok = Show-Confirm -Title 'Disconnect' `
+        -Message "Disconnect from $($script:RemoteHost) and return to local monitoring?" `
+        -YesLabel 'Disconnect' -NoLabel 'Cancel' -YesColour '#F97316'
+    if ($ok) { Disconnect-RemoteHost }
+})
 $C['cmbRemoteHost'].Add_KeyDown({
     param($s,$e)
     if ($e.Key -eq 'Return') { Connect-RemoteHost }
@@ -2516,7 +2816,12 @@ $C['btnExportHtml'].Add_Click({ Export-ToHtml })
 $C['btnSettings'].Add_Click({   Show-SettingsDialog })
 if ($null -ne $C['btnAbout']) { $C['btnAbout'].Add_Click({ Show-AboutDialog }) }
 $C['btnEndTask'].Add_Click({    Invoke-EndTask })
-$C['btnClearAlerts'].Add_Click({ $script:AlertLog.Clear(); $C['lstAlerts'].Items.Clear() })
+$C['btnClearAlerts'].Add_Click({
+    if ($C['lstAlerts'].Items.Count -eq 0) { return }
+    $ok = Show-Confirm -Title 'Clear Alerts' -Message 'Clear all alert log entries?' `
+        -YesLabel 'Clear' -NoLabel 'Cancel' -YesColour '#F97316'
+    if ($ok) { $script:AlertLog.Clear(); $C['lstAlerts'].Items.Clear() }
+})
 
 $Window.Add_Loaded({
     # Tag all Border elements so Set-UITheme can repaint them without
@@ -2545,6 +2850,15 @@ $Window.Add_Loaded({
     Set-UITheme   # apply saved/default theme after tagging
     $Timer.Start()
     try { Update-UI (Get-Metrics) } catch {}
+
+    # Start background profile scan after UI is ready (non-blocking)
+    Start-ProfileScan
+
+    # Re-scan profiles every 5 minutes
+    $script:_ProfRescanTimer          = [System.Windows.Threading.DispatcherTimer]::new()
+    $script:_ProfRescanTimer.Interval = [TimeSpan]::FromMinutes(5)
+    $script:_ProfRescanTimer.Add_Tick({ Start-ProfileScan })
+    $script:_ProfRescanTimer.Start()
 })
 $Window.Add_Closed({
     Save-Config
